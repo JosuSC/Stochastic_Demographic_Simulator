@@ -44,14 +44,15 @@ class Simulator:
             self.population.append(p)
 
     def _get_desired_children(self) -> int:
+        # Suma original del problema: 0.6 + 0.75 + 0.35 + 0.2 + 0.1 + 0.05 = 2.05
+        # Normalizamos para que la probabilidad total sea 1.0 (Probabilidad / 2.05)
         r = random.random()
-        # Normalizando un poco las probabilidades listadas por que la suma cruda excedia 1
-        if r < 0.60: return 1
-        elif r < 0.60 + 0.20: return 2
-        elif r < 0.80 + 0.10: return 3
-        elif r < 0.90 + 0.05: return 4
-        elif r < 0.95 + 0.03: return 5
-        else: return 6
+        if r < 0.292: return 1         # 0.6 / 2.05
+        elif r < 0.658: return 2       # + 0.75 / 2.05
+        elif r < 0.829: return 3       # + 0.35 / 2.05
+        elif r < 0.926: return 4       # + 0.2 / 2.05
+        elif r < 0.975: return 5       # + 0.1 / 2.05
+        else: return 6                 # + 0.05 / 2.05
 
     def get_alive_population(self) -> List[Person]:
         return [p for p in self.population if p.is_alive]
@@ -110,6 +111,12 @@ class Simulator:
         return evaluate_probability(prob)
 
     def _match_probability(self, p1: Person, p2: Person) -> float:
+        # Prevenir emparejamientos bizarros entre un menor de edad y un adulto legal (aunque la dif sea < 20 años)
+        is_p1_minor = p1.age_years < 18
+        is_p2_minor = p2.age_years < 18
+        if (is_p1_minor and not is_p2_minor) or (is_p2_minor and not is_p1_minor):
+            return 0.0
+            
         diff = abs(p1.age_years - p2.age_years)
         if diff <= 5: return 0.45
         elif diff <= 10: return 0.40
@@ -175,11 +182,14 @@ class Simulator:
         mother.is_pregnant = False
         mother.pregnant_months = 0
         
+        # Suma original = 0.70 + 0.18 + 0.08 + 0.04 + 0.02 = 1.02. 
+        # Normalizamos dividiendo por 1.02
         r = random.random()
-        if r < 0.70: num_babies = 1
-        elif r < 0.88: num_babies = 2
-        elif r < 0.96: num_babies = 3
-        else: num_babies = 4
+        if r < 0.686: num_babies = 1       # 0.70 / 1.02
+        elif r < 0.862: num_babies = 2     # + 0.18 / 1.02
+        elif r < 0.941: num_babies = 3     # + 0.08 / 1.02
+        elif r < 0.980: num_babies = 4     # + 0.04 / 1.02
+        else: num_babies = 5
         
         for _ in range(num_babies):
             sex = 'M' if evaluate_probability(0.5) else 'F'
