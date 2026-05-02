@@ -14,7 +14,11 @@ class Simulator:
         
         # Historial de eventos
         self.current_year_logs: List[str] = []
-        self.disease_cure_active: bool = False  # Bandera si se descubrió cura para enfermedades
+        
+        # Banderas de estado global
+        self.disease_cure_active: bool = False  
+        self.economic_crisis_active: int = 0    # Meses restantes de crisis
+        self.baby_boom_active: int = 0          # Meses restantes de auge demográfico
         
         self._initialize_population(initial_females, 'F')
         self._initialize_population(initial_males, 'M')
@@ -69,6 +73,12 @@ class Simulator:
         # Si se descubrió la cura de enfermedades graves, la mortalidad general baja un 40%
         if self.disease_cure_active:
             prob *= 0.60
+            
+        # Modificador global por época económica o de auge
+        if self.economic_crisis_active > 0:
+            prob *= 0.5  # Baja la natalidad a la mitad en crisis
+        if self.baby_boom_active > 0:
+            prob *= 1.5  # Sube la natalidad en un 50%
             
         monthly_prob = self._annual_to_monthly_prob(prob)
         died = evaluate_probability(monthly_prob)
@@ -185,6 +195,11 @@ class Simulator:
 
     def tick(self) -> None:
         self.current_month += 1
+        
+        # Decrementar contadores de estados globales
+        if self.economic_crisis_active > 0: self.economic_crisis_active -= 1
+        if self.baby_boom_active > 0: self.baby_boom_active -= 1
+        
         alive = self.get_alive_population()
         
         # 1. Envejecer y muertes
@@ -207,6 +222,83 @@ class Simulator:
         
         # 4. Embarazos
         self._process_pregnancies_and_births(alive)
+        
+        # 5. Evaluador de Eventos Globales de impacto (ocurren anualmente, por convención el mes 12)
+        if self.current_month % 12 == 0:
+            self._evaluate_global_events(self.get_alive_population())
+
+    def _evaluate_global_events(self, alive: List[Person]) -> None:
+        """Motor de azar para eventos globales que cambian el rumbo del mundo entero."""
+        
+        # 1. Epidemia Global (1% de probabilidad anual)
+        if evaluate_probability(0.01):
+            self._log_event("⚠️ ¡ALERTA! Ha estallado una Epidemia Global mortal. Los más vulnerables corren peligro.")
+            for p in alive:
+                # Más mortal para ancianos y bebés
+                if p.age_years < 3 or p.age_years > 65:
+                    if evaluate_probability(0.15): # 15% mueren
+                        p.is_alive = False
+                        self.total_deaths += 1
+                        self._log_event(f"💀 Muere por la Epidemia {p}")
+                        if p.partner: p.partner.partner = None
+                else: # 2% en población sana
+                    if evaluate_probability(0.02):
+                        p.is_alive = False
+                        self.total_deaths += 1
+                        self._log_event(f"💀 Muere por la Epidemia {p}")
+                        if p.partner: p.partner.partner = None
+
+        # 2. Guerra Mundial/Civil (0.5% probabilidad)
+        elif evaluate_probability(0.005):
+            self._log_event("⚔️ ¡GUERRA! Ha estallado un conflicto armado. La población masculina es reclutada.")
+            for p in alive:
+                if p.sex == 'M' and 18 <= p.age_years <= 45:
+                    if evaluate_probability(0.20): # 20% baja en el frente de batalla
+                        p.is_alive = False
+                        self.total_deaths += 1
+                        self._log_event(f"💀 Soldado caído en combate: {p}")
+                        if p.partner: p.partner.partner = None
+                else: # Daño colateral
+                    if evaluate_probability(0.01):
+                        p.is_alive = False
+                        self.total_deaths += 1
+                        self._log_event(f"💀 Baja civil en la guerra: {p}")
+                        if p.partner: p.partner.partner = None
+                        
+        # 3. Desastre Natural Terremoto / Tsunami (1% de probabilidad)
+        elif evaluate_probability(0.01):
+            self._log_event("🌪️ ¡DESASTRE NATURAL! Un terremoto devastador ha destruido viviendas.")
+            for p in alive:
+                if evaluate_probability(0.03): # Muerte al 3% aleatorio
+                    p.is_alive = False
+                    self.total_deaths += 1
+                    self._log_event(f"💀 Fallecido en el desastre natural {p}")
+                    if p.partner: p.partner.partner = None
+
+        # 4. Avance Científico Médico (0.5%)
+        if not self.disease_cure_active and evaluate_probability(0.005):
+            self.disease_cure_active = True
+            self._log_event("🧬 ¡AVANCE MÉDICO! Se ha descubierto una cura universal para enfermedades graves. La esperanza de vida sube drásticamente.")
+            
+        # 5. Accidentes Esporádicos (Aviones, Tránsito grave) (5% anual)
+        if evaluate_probability(0.05):
+            accident_victims = random.sample(alive, min(len(alive), random.randint(1, 5)))
+            for v in accident_victims:
+                v.is_alive = False
+                self.total_deaths += 1
+                self._log_event(f"💀 Muere en un trágico accidente súbito {v}")
+                if v.partner: v.partner.partner = None
+                
+        # 6. Fluctuaciones Económicas y Sociales
+        if self.economic_crisis_active <= 0 and evaluate_probability(0.03):
+            duracion = random.randint(12, 48) # de 1 a 4 años
+            self.economic_crisis_active = duracion
+            self._log_event(f"📉 CRISIS ECONÓMICA. Se avecinan tiempos difíciles por los próximos {duracion//12} años. Baja la natalidad.")
+            
+        elif self.baby_boom_active <= 0 and evaluate_probability(0.03):
+            duracion = random.randint(24, 60) # de 2 a 5 años
+            self.baby_boom_active = duracion
+            self._log_event(f"🎉 ¡ÉPOCA DORADA! Prosperidad económica desata un Baby Boom por los próximos {duracion//12} años.")
 
     def run(self, months: int) -> None:
         """Ejecuta la simulación durante el número de meses especificado."""
