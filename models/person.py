@@ -33,6 +33,9 @@ class Person:
         """Devuelve la edad en años."""
         return self.age_months / 12.0
         
+    def __str__(self) -> str:
+        return f"Persona #{self.id} ({self.sex}, {int(self.age_years)} años)"
+        
     def age_one_month(self) -> None:
         """Envejece a la persona por un mes y actualiza sus estados temporales."""
         self.age_months += 1

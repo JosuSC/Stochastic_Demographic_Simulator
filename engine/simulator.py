@@ -12,8 +12,16 @@ class Simulator:
         self.total_births: int = 0
         self.total_deaths: int = 0
         
+        # Historial de eventos
+        self.current_year_logs: List[str] = []
+        self.disease_cure_active: bool = False  # Bandera si se descubrió cura para enfermedades
+        
         self._initialize_population(initial_females, 'F')
         self._initialize_population(initial_males, 'M')
+        
+    def _log_event(self, message: str) -> None:
+        """Añade un evento al registro del año actual."""
+        self.current_year_logs.append(message)
 
     def _annual_to_monthly_prob(self, annual_prob: float) -> float:
         """Convierte una probabilidad anual a mensual usando complementos."""
@@ -47,7 +55,9 @@ class Simulator:
     def _check_death(self, p: Person) -> bool:
         """Chequea si muere usando distribución anual transformada de las reglas de vida real."""
         age = p.age_years
-        if age > 125: return True # Top biológico
+        if age > 125: 
+            self._log_event(f"💀 Muere de vejez extrema {p}")
+            return True
         
         # Asumimos que los valores dados eran porcentajes (ej. 0.25 = 0.25%).
         # Un 25% crudo anual causaría la extinción en una generación.
@@ -56,8 +66,15 @@ class Simulator:
         elif age <= 76: prob = 0.0030 if p.sex == 'M' else 0.0035
         else: prob = 0.070 if p.sex == 'M' else 0.065
         
+        # Si se descubrió la cura de enfermedades graves, la mortalidad general baja un 40%
+        if self.disease_cure_active:
+            prob *= 0.60
+            
         monthly_prob = self._annual_to_monthly_prob(prob)
-        return evaluate_probability(monthly_prob)
+        died = evaluate_probability(monthly_prob)
+        if died:
+            self._log_event(f"💀 Muere por causas naturales {p}")
+        return died
 
     def _get_grief_time(self, age_years: float) -> int:
         if age_years <= 15: mean = 3
@@ -106,6 +123,7 @@ class Simulator:
             if evaluate_probability(prob):
                 m.partner = f
                 f.partner = m
+                self._log_event(f"❤️ Nueva pareja formada: {m} y {f}")
 
     def _process_breakups(self, alive: List[Person]) -> None:
         monthly_breakup_prob = self._annual_to_monthly_prob(0.20)
@@ -113,6 +131,7 @@ class Simulator:
             if p.partner and p.sex == 'M': # Iterar solo por los machos evita procesar la pareja 2 veces.
                 if evaluate_probability(monthly_breakup_prob):
                     partner = p.partner
+                    self._log_event(f"💔 Ruptura de pareja entre {p} y {partner}")
                     p.partner = None
                     partner.partner = None
                     p.grief_time_remaining = self._get_grief_time(p.age_years)
@@ -161,6 +180,8 @@ class Simulator:
             self.total_births += 1
             mother.children_count += 1
             if mother.partner: mother.partner.children_count += 1
+            
+        self._log_event(f"👶 Nacimiento: {mother} acaba de dar a luz a {num_babies} bebé(s).")
 
     def tick(self) -> None:
         self.current_month += 1
