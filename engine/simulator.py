@@ -49,10 +49,12 @@ class Simulator:
         age = p.age_years
         if age > 125: return True # Top biológico
         
-        if age <= 12: prob = 0.25
-        elif age <= 45: prob = 0.10 if p.sex == 'M' else 0.15
-        elif age <= 76: prob = 0.30 if p.sex == 'M' else 0.35
-        else: prob = 0.70 if p.sex == 'M' else 0.65
+        # Asumimos que los valores dados eran porcentajes (ej. 0.25 = 0.25%).
+        # Un 25% crudo anual causaría la extinción en una generación.
+        if age <= 12: prob = 0.0025
+        elif age <= 45: prob = 0.0010 if p.sex == 'M' else 0.0015
+        elif age <= 76: prob = 0.0030 if p.sex == 'M' else 0.0035
+        else: prob = 0.070 if p.sex == 'M' else 0.065
         
         monthly_prob = self._annual_to_monthly_prob(prob)
         return evaluate_probability(monthly_prob)
