@@ -1,3 +1,4 @@
+import math
 import random
 from typing import List, Tuple
 from models.person import Person
@@ -14,6 +15,12 @@ class Simulator:
         self._initialize_population(initial_females, 'F')
         self._initialize_population(initial_males, 'M')
 
+    def _annual_to_monthly_prob(self, annual_prob: float) -> float:
+        """Convierte una probabilidad anual a mensual usando complementos."""
+        if annual_prob >= 1.0: return 1.0
+        if annual_prob <= 0.0: return 0.0
+        return 1.0 - math.pow(1.0 - annual_prob, 1.0 / 12.0)
+
     def _initialize_population(self, count: int, sex: str) -> None:
         """Crea la población inicial con edades uniformes entre 0 y 100 años."""
         for _ in range(count):
@@ -26,19 +33,138 @@ class Simulator:
 
     def _get_desired_children(self) -> int:
         r = random.random()
-        if r < 0.6: return 1
-        if r < 0.6 + 0.75 / 2.5: return 2 # Normalizado aprox
-        return random.randint(1, 5)
+        # Normalizando un poco las probabilidades listadas por que la suma cruda excedia 1
+        if r < 0.60: return 1
+        elif r < 0.60 + 0.20: return 2
+        elif r < 0.80 + 0.10: return 3
+        elif r < 0.90 + 0.05: return 4
+        elif r < 0.95 + 0.03: return 5
+        else: return 6
 
     def get_alive_population(self) -> List[Person]:
         return [p for p in self.population if p.is_alive]
 
+    def _check_death(self, p: Person) -> bool:
+        """Chequea si muere usando distribución anual transformada de las reglas de vida real."""
+        age = p.age_years
+        if age > 125: return True # Top biológico
+        
+        if age <= 12: prob = 0.25
+        elif age <= 45: prob = 0.10 if p.sex == 'M' else 0.15
+        elif age <= 76: prob = 0.30 if p.sex == 'M' else 0.35
+        else: prob = 0.70 if p.sex == 'M' else 0.65
+        
+        monthly_prob = self._annual_to_monthly_prob(prob)
+        return evaluate_probability(monthly_prob)
+
+    def _get_grief_time(self, age_years: float) -> int:
+        if age_years <= 15: mean = 3
+        elif age_years <= 21: mean = 6
+        elif age_years <= 35: mean = 6
+        elif age_years <= 45: mean = 12
+        elif age_years <= 60: mean = 24
+        else: mean = 48
+        return max(1, int(get_exponential(mean)))
+
+    def _wants_partner(self, p: Person) -> bool:
+        if p.partner is not None: return False
+        if p.grief_time_remaining > 0: return False
+        
+        age = p.age_years
+        if age < 12: prob = 0.0
+        elif age <= 15: prob = 0.60
+        elif age <= 21: prob = 0.65
+        elif age <= 35: prob = 0.80
+        elif age <= 45: prob = 0.60
+        elif age <= 60: prob = 0.50
+        else: prob = 0.20
+        return evaluate_probability(prob)
+
+    def _match_probability(self, p1: Person, p2: Person) -> float:
+        diff = abs(p1.age_years - p2.age_years)
+        if diff <= 5: return 0.45
+        elif diff <= 10: return 0.40
+        elif diff <= 15: return 0.35
+        elif diff <= 20: return 0.25
+        else: return 0.15
+
+    def _process_matchmaking(self, alive: List[Person]) -> None:
+        """Empareja solteros eficientemente."""
+        singles_m = [p for p in alive if p.sex == 'M' and self._wants_partner(p)]
+        singles_f = [p for p in alive if p.sex == 'F' and self._wants_partner(p)]
+        
+        random.shuffle(singles_m)
+        random.shuffle(singles_f)
+        
+        limit = min(len(singles_m), len(singles_f))
+        for i in range(limit):
+            m = singles_m[i]
+            f = singles_f[i]
+            prob = self._match_probability(m, f)
+            if evaluate_probability(prob):
+                m.partner = f
+                f.partner = m
+
+    def _process_breakups(self, alive: List[Person]) -> None:
+        monthly_breakup_prob = self._annual_to_monthly_prob(0.20)
+        for p in alive:
+            if p.partner and p.sex == 'M': # Iterar solo por los machos evita procesar la pareja 2 veces.
+                if evaluate_probability(monthly_breakup_prob):
+                    partner = p.partner
+                    p.partner = None
+                    partner.partner = None
+                    p.grief_time_remaining = self._get_grief_time(p.age_years)
+                    partner.grief_time_remaining = self._get_grief_time(partner.age_years)
+
+    def _process_pregnancies_and_births(self, alive: List[Person]) -> None:
+        for p in alive:
+            if p.sex != 'F': continue
+            
+            if p.is_pregnant:
+                if p.pregnant_months >= 9:
+                    self._handle_birth(p)
+                continue
+
+            if p.partner and p.children_count < p.desired_children:
+                age = p.age_years
+                if age < 12: prob = 0.0
+                elif age <= 15: prob = 0.20
+                elif age <= 21: prob = 0.45
+                elif age <= 35: prob = 0.80
+                elif age <= 45: prob = 0.40
+                elif age <= 60: prob = 0.20
+                else: prob = 0.05
+                
+                monthly_preg_prob = self._annual_to_monthly_prob(prob)
+                if evaluate_probability(monthly_preg_prob):
+                    p.is_pregnant = True
+                    p.pregnant_months = 0
+
+    def _handle_birth(self, mother: Person) -> None:
+        mother.is_pregnant = False
+        mother.pregnant_months = 0
+        
+        r = random.random()
+        if r < 0.70: num_babies = 1
+        elif r < 0.88: num_babies = 2
+        elif r < 0.96: num_babies = 3
+        else: num_babies = 4
+        
+        for _ in range(num_babies):
+            sex = 'M' if evaluate_probability(0.5) else 'F'
+            baby = Person(sex, 0)
+            baby.desired_children = self._get_desired_children()
+            
+            self.population.append(baby)
+            self.total_births += 1
+            mother.children_count += 1
+            if mother.partner: mother.partner.children_count += 1
+
     def tick(self) -> None:
-        """Avanza el reloj un mes y procesa todos los eventos para la población."""
         self.current_month += 1
         alive = self.get_alive_population()
         
-        # Procesar envejecimiento y muertes
+        # 1. Envejecer y muertes
         for p in alive:
             p.age_one_month()
             if self._check_death(p):
@@ -48,15 +174,18 @@ class Simulator:
                     p.partner.partner = None
                     p.partner.grief_time_remaining = self._get_grief_time(p.partner.age_years)
                     
-        # ... Lógica simplificada de emparejamiento y nacimientos para acortar
+        alive = self.get_alive_population()
         
+        # 2. Rupturas
+        self._process_breakups(alive)
+        
+        # 3. Matchmaking
+        self._process_matchmaking(alive)
+        
+        # 4. Embarazos
+        self._process_pregnancies_and_births(alive)
+
     def run(self, months: int) -> None:
         """Ejecuta la simulación durante el número de meses especificado."""
         for _ in range(months):
             self.tick()
-
-    def _check_death(self, p: Person) -> bool:
-        return evaluate_probability(0.001) # Dummy prob
-
-    def _get_grief_time(self, age_years: float) -> int:
-        return int(get_exponential(12.0))
