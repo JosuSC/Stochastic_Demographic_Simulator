@@ -48,29 +48,14 @@ class SimulationRecord(dict[str, int | float]):
 
 def _count_couples(simulator: Simulator) -> int:
     """Cuenta las parejas activas en la población actual."""
-    couples_set = set()
+    couples_set: set[tuple[int, int]] = set()
     for person in simulator.get_alive_population():
         if person.partner is not None:
-            # Usar IDs o referencias para evitar duplicados
-            pair = tuple(sorted([id(person), id(person.partner)]))
+            first_id = id(person)
+            second_id = id(person.partner)
+            pair: tuple[int, int] = (min(first_id, second_id), max(first_id, second_id))
             couples_set.add(pair)
     return len(couples_set)
-
-
-def _count_breakups_in_year(
-    simulator_before_year: Simulator,
-    simulator_after_year: Simulator,
-) -> int:
-    """
-    Estima el número de rupturas en un año basándose en el cambio de parejas.
-    
-    Nota: Esta es una aproximación ya que el motor no expone rupturas explícitamente.
-    Se calcula como: parejas_inicio - (parejas_fin - parejas_formadas).
-    """
-    # Para una aproximación más precisa, se podría registrar rupturas en el motor,
-    # pero mantenemos el contrato sin modificar el simulador.
-    # Por ahora, usamos 0 como placeholder o una heurística conservadora.
-    return 0
 
 
 def _get_sex_distribution(simulator: Simulator) -> tuple[int, int]:

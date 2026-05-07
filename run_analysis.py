@@ -5,14 +5,19 @@ Flujo completo:
 1. Registra el adaptador con statistical_analysis
 2. Ejecuta N corridas independientes
 3. Agrega estadísticas anuales
-4. Exporta a CSV
+4. Exporta las corridas crudas opcionalmente
+5. Exporta a CSV
 """
 
 import logging
 from pathlib import Path
+from typing import Sequence
+
+import pandas as pd
 
 from simulation_adapter import run_single_simulation_complete
 from statistical_analysis import (
+    SimulationRunResult,
     register_simulation_runner,
     run_multiple_simulations,
     aggregate_statistics,
@@ -24,6 +29,37 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
+
+
+def export_raw_runs(results: Sequence[SimulationRunResult], output_file: Path) -> None:
+    """Guarda el detalle anual de cada corrida para visualizaciones de distribución."""
+
+    rows: list[dict[str, object]] = []
+    for result in results:
+        if not result.succeeded or result.records is None:
+            continue
+        for record in result.records:
+            rows.append(
+                {
+                    "run_id": result.run_id,
+                    "seed": result.seed,
+                    "year": record["year"],
+                    "population": record["population"],
+                    "men": record["men"],
+                    "women": record["women"],
+                    "births": record["births"],
+                    "deaths": record["deaths"],
+                    "couples": record["couples"],
+                    "breakups": record["breakups"],
+                }
+            )
+
+    if not rows:
+        logging.warning("No raw run data was generated, skipping %s", output_file)
+        return
+
+    pd.DataFrame.from_records(rows).to_csv(output_file, index=False)
+    logging.info("Corridas crudas exportadas a %s", output_file)
 
 
 def main() -> int:
@@ -47,6 +83,10 @@ def main() -> int:
     if statistics_df.empty:
         logging.error("No se generaron estadísticas (todas las corridas fallaron)")
         return 1
+
+    # 3b. Exportar detalle crudo para histogramas y análisis de distribución
+    raw_output_file = Path("simulation_runs.csv")
+    export_raw_runs(results, raw_output_file)
 
     # 4. Exportar a CSV
     output_file = Path("simulation_statistics.csv")

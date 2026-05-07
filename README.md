@@ -65,5 +65,36 @@ The project relies on a modular, decoupled architecture, entirely independent of
 - **Genetic Traits:** Pass inherited metadata (disease resistance, fertility caps) from parents to offspring.
 - **Parallel Computing:** Migrate the `tick()` cycle to Python's `multiprocessing` to handle populations exceeding 1,000,000 agents.
 
+## 📊 Statistical Analysis and Visualization
+
+The project now includes a reproducible statistical pipeline and a professional dashboard.
+
+### Generate statistics
+
+```bash
+python run_analysis.py
+```
+
+This produces:
+
+- `simulation_statistics.csv` with yearly aggregated statistics
+- `simulation_runs.csv` with raw annual records for each simulation run
+
+### Launch the dashboard
+
+```bash
+streamlit run dashboard.py
+```
+
+The dashboard includes:
+
+- Population mean with 95% confidence interval
+- Births vs deaths
+- Net growth and annual growth rate
+- Population structure by sex
+- Stability indicators
+- Decade-based distribution charts
+- Final distribution histogram when raw run data is available
+
 ---
 *Created as an academic showcase of computational simulation logic, software architecture, and stochastic modeling.*
