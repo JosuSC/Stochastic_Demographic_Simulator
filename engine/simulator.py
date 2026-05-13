@@ -167,7 +167,7 @@ class Simulator:
                 age = p.age_years
                 if age < 12: prob = 0.0
                 elif age <= 15: prob = 0.20
-                elif age <= 21: prob = 0.45
+                elif age <= 21: prob = 0.45 
                 elif age <= 35: prob = 0.80
                 elif age <= 45: prob = 0.40
                 elif age <= 60: prob = 0.20
