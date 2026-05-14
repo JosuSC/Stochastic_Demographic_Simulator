@@ -1,25 +1,33 @@
 import math
 import random
-from typing import List, Tuple
+from typing import Callable, List, Tuple
 from models.person import Person
 from utils.probability import get_uniform, evaluate_probability, get_exponential
 
 class Simulator:
-    """Motor central de eventos discretos que maneja el reloj y los agentes."""
+    """Motor central de eventos discretos con avance de tiempo por eventos."""
     def __init__(self, initial_females: int, initial_males: int):
         self.population: List[Person] = []
-        self.current_month: int = 0
+        self.current_month: float = 0.0
         self.total_births: int = 0
         self.total_deaths: int = 0
-        
+
         # Historial de eventos
         self.current_year_logs: List[str] = []
-        
+
         # Banderas de estado global
-        self.disease_cure_active: bool = False  
-        self.economic_crisis_active: int = 0    # Meses restantes de crisis
-        self.baby_boom_active: int = 0          # Meses restantes de auge demográfico
-        
+        self.disease_cure_active: bool = False
+        self.economic_crisis_active: float = 0.0  # Meses restantes de crisis
+        self.baby_boom_active: float = 0.0        # Meses restantes de auge demográfico
+
+        # Sistema de flags para eventos globales
+        self.config = {
+            "crisis_economica_enabled": False,
+            "baby_boom_enabled": False,
+            "cura_enfermedades_enabled": False,
+            "accidentes_masivo": False,
+        }
+
         self._initialize_population(initial_females, 'F')
         self._initialize_population(initial_males, 'M')
         
@@ -33,10 +41,16 @@ class Simulator:
         if annual_prob <= 0.0: return 0.0
         return 1.0 - math.pow(1.0 - annual_prob, 1.0 / 12.0)
 
+    def _period_prob(self, monthly_prob: float, delta_t: float) -> float:
+        if monthly_prob <= 0.0: return 0.0
+        if monthly_prob >= 1.0: return 1.0
+        if delta_t <= 0.0: return 0.0
+        return 1.0 - math.pow(1.0 - monthly_prob, delta_t)
+
     def _initialize_population(self, count: int, sex: str) -> None:
         """Crea la población inicial con edades uniformes entre 0 y 100 años."""
         for _ in range(count):
-            age_months = int(get_uniform(0, 100) * 12)
+            age_months = get_uniform(0, 100) * 12
             p = Person(sex, age_months)
             
             # Asignar hijos deseados
@@ -87,14 +101,14 @@ class Simulator:
             self._log_event(f"💀 Muere por causas naturales {p}")
         return died
 
-    def _get_grief_time(self, age_years: float) -> int:
+    def _get_grief_time(self, age_years: float) -> float:
         if age_years <= 15: mean = 3
         elif age_years <= 21: mean = 6
         elif age_years <= 35: mean = 6
         elif age_years <= 45: mean = 12
         elif age_years <= 60: mean = 24
         else: mean = 48
-        return max(1, int(get_exponential(mean)))
+        return max(1.0, get_exponential(mean))
 
     def _wants_partner(self, p: Person) -> bool:
         if p.partner is not None: return False
@@ -124,59 +138,54 @@ class Simulator:
         elif diff <= 20: return 0.25
         else: return 0.15
 
-    def _process_matchmaking(self, alive: List[Person]) -> None:
-        """Empareja solteros eficientemente."""
-        singles_m = [p for p in alive if p.sex == 'M' and self._wants_partner(p)]
-        singles_f = [p for p in alive if p.sex == 'F' and self._wants_partner(p)]
-        
-        random.shuffle(singles_m)
-        random.shuffle(singles_f)
-        
-        limit = min(len(singles_m), len(singles_f))
-        for i in range(limit):
-            m = singles_m[i]
-            f = singles_f[i]
-            prob = self._match_probability(m, f)
-            if evaluate_probability(prob):
-                m.partner = f
-                f.partner = m
-                self._log_event(f"❤️ Nueva pareja formada: {m} y {f}")
+    # EVENT SCHEDULER -------------------------------------------------
+    def _build_events_by_type(
+        self,
+        funcion: Callable[[float], None],
+        lam: float,
+        duration: float,
+    ) -> List[Tuple[float, Callable[[float], None]]]:
+        if lam <= 0.0 or duration <= 0.0:
+            return []
+        t = 0.0
+        agenda: List[Tuple[float, Callable[[float], None]]] = []
+        while t < duration:
+            dt = random.expovariate(lam)
+            t += dt
+            if t > duration:
+                break
+            agenda.append((t, funcion))
+        return agenda
 
-    def _process_breakups(self, alive: List[Person]) -> None:
-        monthly_breakup_prob = self._annual_to_monthly_prob(0.20)
-        for p in alive:
-            if p.partner and p.sex == 'M': # Iterar solo por los machos evita procesar la pareja 2 veces.
-                if evaluate_probability(monthly_breakup_prob):
-                    partner = p.partner
-                    self._log_event(f"💔 Ruptura de pareja entre {p} y {partner}")
-                    p.partner = None
-                    partner.partner = None
-                    p.grief_time_remaining = self._get_grief_time(p.age_years)
-                    partner.grief_time_remaining = self._get_grief_time(partner.age_years)
+    def build_event_schedule(self, duration: float) -> List[Tuple[float, Callable[[float], None]]]:
+        """Genera la agenda de eventos (tiempo, callback) ordenada cronológicamente."""
+        agenda: List[Tuple[float, Callable[[float], None]]] = []
 
-    def _process_pregnancies_and_births(self, alive: List[Person]) -> None:
-        for p in alive:
-            if p.sex != 'F': continue
-            
-            if p.is_pregnant:
-                if p.pregnant_months >= 9:
-                    self._handle_birth(p)
-                continue
+        # Tasas base (eventos por mes)
+        tipos_eventos = [
+            (self._event_deaths, 1.0),
+            (self._event_breakups, 0.2),
+            (self._event_matchmaking, 0.5),
+            (self._event_pregnancies, 1.0),
+            (self._event_epidemic, 0.01 / 12.0),
+            (self._event_war, 0.005 / 12.0),
+            (self._event_disaster, 0.01 / 12.0),
+        ]
 
-            if p.partner and p.children_count < p.desired_children:
-                age = p.age_years
-                if age < 12: prob = 0.0
-                elif age <= 15: prob = 0.20
-                elif age <= 21: prob = 0.45 
-                elif age <= 35: prob = 0.80
-                elif age <= 45: prob = 0.40
-                elif age <= 60: prob = 0.20
-                else: prob = 0.05
-                
-                monthly_preg_prob = self._annual_to_monthly_prob(prob)
-                if evaluate_probability(monthly_preg_prob):
-                    p.is_pregnant = True
-                    p.pregnant_months = 0
+        for funcion, lam in tipos_eventos:
+            agenda.extend(self._build_events_by_type(funcion, lam, duration))
+
+        if self.config.get("crisis_economica_enabled", True):
+            agenda.extend(self._build_events_by_type(self._event_crisis, 0.03 / 12.0, duration))
+        if self.config.get("baby_boom_enabled", True):
+            agenda.extend(self._build_events_by_type(self._event_baby_boom, 0.03 / 12.0, duration))
+        if self.config.get("cura_enfermedades_enabled", True):
+            agenda.extend(self._build_events_by_type(self._event_cure, 0.005 / 12.0, duration))
+        if self.config.get("accidentes_aereos_enabled", True):
+            agenda.extend(self._build_events_by_type(self._event_accidents, 0.05 / 12.0, duration))
+
+        agenda.sort(key=lambda x: x[0])
+        return agenda
 
     def _handle_birth(self, mother: Person) -> None:
         mother.is_pregnant = False
@@ -203,114 +212,191 @@ class Simulator:
             
         self._log_event(f"👶 Nacimiento: {mother} acaba de dar a luz a {num_babies} bebé(s).")
 
-    def tick(self) -> None:
-        self.current_month += 1
-        
-        # Decrementar contadores de estados globales
-        if self.economic_crisis_active > 0: self.economic_crisis_active -= 1
-        if self.baby_boom_active > 0: self.baby_boom_active -= 1
-        
+    def _advance_time_state(self, delta_t: float) -> None:
+        if delta_t <= 0.0:
+            return
+
+        if self.economic_crisis_active > 0:
+            self.economic_crisis_active = max(0.0, self.economic_crisis_active - delta_t)
+        if self.baby_boom_active > 0:
+            self.baby_boom_active = max(0.0, self.baby_boom_active - delta_t)
+
         alive = self.get_alive_population()
-        
-        # 1. Envejecer y muertes
         for p in alive:
-            p.age_one_month()
-            if self._check_death(p):
-                p.is_alive = False
-                self.total_deaths += 1
-                if p.partner:
-                    p.partner.partner = None
-                    p.partner.grief_time_remaining = self._get_grief_time(p.partner.age_years)
-                    
+            p.age_months += delta_t
+
+            if p.grief_time_remaining > 0:
+                p.grief_time_remaining = max(0.0, p.grief_time_remaining - delta_t)
+
+            if p.is_pregnant:
+                p.pregnant_months += delta_t
+                if p.pregnant_months >= 9.0:
+                    self._handle_birth(p)
+
+    def _kill_person(self, p: Person, reason: str) -> None:
+        p.is_alive = False
+        self.total_deaths += 1
+        self._log_event(f"💀 {reason} {p}")
+        if p.partner:
+            p.partner.partner = None
+            p.partner.grief_time_remaining = self._get_grief_time(p.partner.age_years)
+
+    # EVENT HANDLERS -------------------------------------------------
+    def _event_deaths(self, delta_t: float) -> None:
         alive = self.get_alive_population()
-        
-        # 2. Rupturas
-        self._process_breakups(alive)
-        
-        # 3. Matchmaking
-        self._process_matchmaking(alive)
-        
-        # 4. Embarazos
-        self._process_pregnancies_and_births(alive)
-        
-        # 5. Evaluador de Eventos Globales de impacto (ocurren anualmente, por convención el mes 12)
-        if self.current_month % 12 == 0:
-            self._evaluate_global_events(self.get_alive_population())
+        for p in alive:
+            age = p.age_years
+            if age > 125:
+                self._kill_person(p, "Muere de vejez extrema")
+                continue
 
-    def _evaluate_global_events(self, alive: List[Person]) -> None:
-        """Motor de azar para eventos globales que cambian el rumbo del mundo entero."""
-        
-        # 1. Epidemia Global (1% de probabilidad anual)
-        if evaluate_probability(0.01):
-            self._log_event("⚠️ ¡ALERTA! Ha estallado una Epidemia Global mortal. Los más vulnerables corren peligro.")
-            for p in alive:
-                # Más mortal para ancianos y bebés
-                if p.age_years < 3 or p.age_years > 65:
-                    if evaluate_probability(0.15): # 15% mueren
-                        p.is_alive = False
-                        self.total_deaths += 1
-                        self._log_event(f"💀 Muere por la Epidemia {p}")
-                        if p.partner: p.partner.partner = None
-                else: # 2% en población sana
-                    if evaluate_probability(0.02):
-                        p.is_alive = False
-                        self.total_deaths += 1
-                        self._log_event(f"💀 Muere por la Epidemia {p}")
-                        if p.partner: p.partner.partner = None
+            if age <= 12: prob = 0.0025
+            elif age <= 45: prob = 0.0010 if p.sex == 'M' else 0.0015
+            elif age <= 76: prob = 0.0030 if p.sex == 'M' else 0.0035
+            else: prob = 0.070 if p.sex == 'M' else 0.065
 
-        # 2. Guerra Mundial/Civil (0.5% probabilidad)
-        elif evaluate_probability(0.005):
-            self._log_event("⚔️ ¡GUERRA! Ha estallado un conflicto armado. La población masculina es reclutada.")
-            for p in alive:
-                if p.sex == 'M' and 18 <= p.age_years <= 45:
-                    if evaluate_probability(0.20): # 20% baja en el frente de batalla
-                        p.is_alive = False
-                        self.total_deaths += 1
-                        self._log_event(f"💀 Soldado caído en combate: {p}")
-                        if p.partner: p.partner.partner = None
-                else: # Daño colateral
-                    if evaluate_probability(0.01):
-                        p.is_alive = False
-                        self.total_deaths += 1
-                        self._log_event(f"💀 Baja civil en la guerra: {p}")
-                        if p.partner: p.partner.partner = None
-                        
-        # 3. Desastre Natural Terremoto / Tsunami (1% de probabilidad)
-        elif evaluate_probability(0.01):
-            self._log_event("🌪️ ¡DESASTRE NATURAL! Un terremoto devastador ha destruido viviendas.")
-            for p in alive:
-                if evaluate_probability(0.03): # Muerte al 3% aleatorio
-                    p.is_alive = False
-                    self.total_deaths += 1
-                    self._log_event(f"💀 Fallecido en el desastre natural {p}")
-                    if p.partner: p.partner.partner = None
+            if self.disease_cure_active:
+                prob *= 0.60
+            if self.economic_crisis_active > 0:
+                prob *= 0.5
+            if self.baby_boom_active > 0:
+                prob *= 1.5
 
-        # 4. Avance Científico Médico (0.5%)
-        if not self.disease_cure_active and evaluate_probability(0.005):
+            monthly_prob = self._annual_to_monthly_prob(prob)
+            period_prob = self._period_prob(monthly_prob, delta_t)
+            if evaluate_probability(period_prob):
+                self._kill_person(p, "Muere por causas naturales")
+
+    def _event_breakups(self, delta_t: float) -> None:
+        monthly_breakup_prob = self._annual_to_monthly_prob(0.20)
+        alive = self.get_alive_population()
+        for p in alive:
+            if p.partner and p.sex == 'M':
+                if evaluate_probability(monthly_breakup_prob):
+                    partner = p.partner
+                    self._log_event(f"💔 Ruptura de pareja entre {p} y {partner}")
+                    p.partner = None
+                    partner.partner = None
+                    p.grief_time_remaining = self._get_grief_time(p.age_years)
+                    partner.grief_time_remaining = self._get_grief_time(partner.age_years)
+
+    def _event_matchmaking(self, delta_t: float) -> None:
+        alive = self.get_alive_population()
+        singles_m = [p for p in alive if p.sex == 'M' and self._wants_partner(p)]
+        singles_f = [p for p in alive if p.sex == 'F' and self._wants_partner(p)]
+
+        random.shuffle(singles_m)
+        random.shuffle(singles_f)
+
+        limit = min(len(singles_m), len(singles_f))
+        for i in range(limit):
+            m = singles_m[i]
+            f = singles_f[i]
+            base_prob = self._match_probability(m, f)
+            noise = get_uniform(0.8, 1.2)
+            prob = min(1.0, base_prob * noise)
+            if evaluate_probability(prob):
+                m.partner = f
+                f.partner = m
+                self._log_event(f"❤️ Nueva pareja formada: {m} y {f}")
+
+    def _event_pregnancies(self, delta_t: float) -> None:
+        alive = self.get_alive_population()
+        for p in alive:
+            if p.sex != 'F' or p.is_pregnant:
+                continue
+            if p.partner and p.children_count < p.desired_children:
+                age = p.age_years
+                if age < 12: prob = 0.0
+                elif age <= 15: prob = 0.20
+                elif age <= 21: prob = 0.45
+                elif age <= 35: prob = 0.80
+                elif age <= 45: prob = 0.40
+                elif age <= 60: prob = 0.20
+                else: prob = 0.05
+
+                monthly_preg_prob = self._annual_to_monthly_prob(prob)
+                if evaluate_probability(monthly_preg_prob):
+                    p.is_pregnant = True
+                    p.pregnant_months = 0.0
+
+    # EVENTOS GLOBALES ----------------------------------------------
+    def _event_epidemic(self, delta_t: float) -> None:
+        alive = self.get_alive_population()
+        if not alive:
+            return
+        self._log_event("⚠️ ¡ALERTA! Ha estallado una Epidemia Global mortal. Los más vulnerables corren peligro.")
+        for p in alive:
+            if p.age_years < 3 or p.age_years > 65:
+                if evaluate_probability(0.15):
+                    self._kill_person(p, "Muere por la Epidemia")
+            else:
+                if evaluate_probability(0.02):
+                    self._kill_person(p, "Muere por la Epidemia")
+
+    def _event_war(self, delta_t: float) -> None:
+        alive = self.get_alive_population()
+        if not alive:
+            return
+        self._log_event("⚔️ ¡GUERRA! Ha estallado un conflicto armado. La población masculina es reclutada.")
+        for p in alive:
+            if p.sex == 'M' and 18 <= p.age_years <= 45:
+                if evaluate_probability(0.20):
+                    self._kill_person(p, "Soldado caído en combate:")
+            else:
+                if evaluate_probability(0.01):
+                    self._kill_person(p, "Baja civil en la guerra:")
+
+    def _event_disaster(self, delta_t: float) -> None:
+        alive = self.get_alive_population()
+        if not alive:
+            return
+        self._log_event("🌪️ ¡DESASTRE NATURAL! Un terremoto devastador ha destruido viviendas.")
+        for p in alive:
+            if evaluate_probability(0.03):
+                self._kill_person(p, "Fallecido en el desastre natural")
+
+    def _event_cure(self, delta_t: float) -> None:
+        if not self.disease_cure_active:
             self.disease_cure_active = True
-            self._log_event("🧬 ¡AVANCE MÉDICO! Se ha descubierto una cura universal para enfermedades graves. La esperanza de vida sube drásticamente.")
-            
-        # 5. Accidentes Esporádicos (Aviones, Tránsito grave) (5% anual)
-        if evaluate_probability(0.05):
-            accident_victims = random.sample(alive, min(len(alive), random.randint(1, 5)))
-            for v in accident_victims:
-                v.is_alive = False
-                self.total_deaths += 1
-                self._log_event(f"💀 Muere en un trágico accidente súbito {v}")
-                if v.partner: v.partner.partner = None
-                
-        # 6. Fluctuaciones Económicas y Sociales
-        if self.economic_crisis_active <= 0 and evaluate_probability(0.03):
-            duracion = random.randint(12, 48) # de 1 a 4 años
-            self.economic_crisis_active = duracion
-            self._log_event(f"📉 CRISIS ECONÓMICA. Se avecinan tiempos difíciles por los próximos {duracion//12} años. Baja la natalidad.")
-            
-        elif self.baby_boom_active <= 0 and evaluate_probability(0.03):
-            duracion = random.randint(24, 60) # de 2 a 5 años
-            self.baby_boom_active = duracion
-            self._log_event(f"🎉 ¡ÉPOCA DORADA! Prosperidad económica desata un Baby Boom por los próximos {duracion//12} años.")
+            self._log_event("🧬 ¡AVANCE MÉDICO! Se ha descubierto una cura universal para enfermedades graves.")
 
-    def run(self, months: int) -> None:
-        """Ejecuta la simulación durante el número de meses especificado."""
-        for _ in range(months):
-            self.tick()
+    def _event_accidents(self, delta_t: float) -> None:
+        alive = self.get_alive_population()
+        if not alive:
+            return
+        accident_victims = random.sample(alive, min(len(alive), random.randint(1, 5)))
+        for v in accident_victims:
+            self._kill_person(v, "Muere en un trágico accidente súbito")
+
+    def _event_crisis(self, delta_t: float) -> None:
+        if self.economic_crisis_active <= 0:
+            duracion = random.randint(12, 48)
+            self.economic_crisis_active = float(duracion)
+            self._log_event(f"📉 CRISIS ECONÓMICA. Se avecinan tiempos difíciles por {duracion} meses.")
+
+    def _event_baby_boom(self, delta_t: float) -> None:
+        if self.baby_boom_active <= 0:
+            duracion = random.randint(24, 60)
+            self.baby_boom_active = float(duracion)
+            self._log_event(f"🎉 ÉPOCA DORADA. Baby Boom activo por {duracion} meses.")
+
+    # API PRINCIPAL --------------------------------------------------
+    def run(self, duration: float) -> None:
+        """Ejecuta la simulación durante `duration` meses usando agenda de eventos."""
+        agenda_eventos = self.build_event_schedule(duration)
+        last_time = 0.0
+
+        for t, funcion in agenda_eventos:
+            delta_t = t - last_time
+            self._advance_time_state(delta_t)
+            funcion(delta_t)
+            last_time = t
+
+        if last_time < duration:
+            self._advance_time_state(duration - last_time)
+
+        self.current_month += duration
+
+    def tick(self) -> None:
+        self.run(1.0)
