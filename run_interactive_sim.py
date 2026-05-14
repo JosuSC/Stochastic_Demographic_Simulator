@@ -1,0 +1,53 @@
+import argparse
+
+from engine.simulator import Simulator
+
+
+def run_once(months: int, sim: Simulator) -> None:
+    sim.current_year_logs.clear()
+    births_before = sim.total_births
+    deaths_before = sim.total_deaths
+    sim.run(months)
+    alive = len(sim.get_alive_population())
+    print(
+        "poblacion=", alive,
+        "births=", sim.total_births - births_before,
+        "deaths=", sim.total_deaths - deaths_before,
+    )
+    for e in sim.current_year_logs:
+        print(" -", e)
+
+
+def interactive_loop(sim: Simulator) -> None:
+    while True:
+        try:
+            raw = input("Meses a avanzar (0 para salir): ").strip()
+            months = int(raw)
+        except Exception:
+            print("Valor invalido")
+            continue
+        if months <= 0:
+            break
+        run_once(months, sim)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--months", type=int, default=0)
+    parser.add_argument("--female", type=int, default=500)
+    parser.add_argument("--male", type=int, default=500)
+    args = parser.parse_args()
+
+    sim = Simulator(initial_females=args.female, initial_males=args.male)
+    print("inicio: poblacion=", len(sim.get_alive_population()))
+
+    if args.months and args.months > 0:
+        run_once(args.months, sim)
+    else:
+        interactive_loop(sim)
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
