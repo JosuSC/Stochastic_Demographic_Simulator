@@ -21,13 +21,21 @@ def run_once(months: int, sim: Simulator) -> None:
 def interactive_loop(sim: Simulator) -> None:
     while True:
         try:
-            raw = input("Meses a avanzar (0 para salir): ").strip()
-            months = int(raw)
+            unit = input("Unidad (m=meses, a=anios, 0=salir): ").strip().lower()
+            if unit == "0":
+                break
+            if unit not in {"m", "a"}:
+                print("Unidad invalida")
+                continue
+            raw = input("Cantidad a avanzar: ").strip()
+            amount = int(raw)
+            if amount <= 0:
+                print("Cantidad invalida")
+                continue
+            months = amount if unit == "m" else amount * 12
         except Exception:
             print("Valor invalido")
             continue
-        if months <= 0:
-            break
         run_once(months, sim)
 
 
