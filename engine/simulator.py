@@ -7,7 +7,9 @@ from utils.probability import get_uniform, evaluate_probability, get_exponential
 class Simulator:
     """Motor central de eventos discretos con avance de tiempo por eventos."""
     def __init__(self, initial_females: int, initial_males: int):
-        self.population: List[Person] = []
+        """Arma el estado inicial del simulador y crea la poblacion base."""
+        self.population_alive: List[Person] = []
+        self.population_dead: List[Person] = []
         self.current_month: float = 0.0
         self.total_births: int = 0
         self.total_deaths: int = 0
@@ -42,6 +44,7 @@ class Simulator:
         return 1.0 - math.pow(1.0 - annual_prob, 1.0 / 12.0)
 
     def _period_prob(self, monthly_prob: float, delta_t: float) -> float:
+        """Ajusta una probabilidad mensual al periodo real transcurrido."""
         if monthly_prob <= 0.0: return 0.0
         if monthly_prob >= 1.0: return 1.0
         if delta_t <= 0.0: return 0.0
@@ -55,9 +58,10 @@ class Simulator:
             
             # Asignar hijos deseados
             p.desired_children = self._get_desired_children()
-            self.population.append(p)
+            self.population_alive.append(p)
 
     def _get_desired_children(self) -> int:
+        """Sortea cuantos hijos desea tener una persona segun la tabla dada."""
         # Suma original del problema: 0.6 + 0.75 + 0.35 + 0.2 + 0.1 + 0.05 = 2.05
         # Normalizamos para que la probabilidad total sea 1.0 (Probabilidad / 2.05)
         r = random.random()
@@ -67,9 +71,6 @@ class Simulator:
         elif r < 0.926: return 4       # + 0.2 / 2.05
         elif r < 0.975: return 5       # + 0.1 / 2.05
         else: return 6                 # + 0.05 / 2.05
-
-    def get_alive_population(self) -> List[Person]:
-        return [p for p in self.population if p.is_alive]
 
     def _check_death(self, p: Person) -> bool:
         """Chequea si muere usando distribución anual transformada de las reglas de vida real."""
@@ -102,6 +103,7 @@ class Simulator:
         return died
 
     def _get_grief_time(self, age_years: float) -> float:
+        """Devuelve el tiempo de duelo esperado segun la edad."""
         if age_years <= 15: mean = 3
         elif age_years <= 21: mean = 6
         elif age_years <= 35: mean = 6
@@ -111,6 +113,7 @@ class Simulator:
         return max(1.0, get_exponential(mean))
 
     def _wants_partner(self, p: Person) -> bool:
+        """Decide si alguien busca pareja en este momento."""
         if p.partner is not None: return False
         if p.grief_time_remaining > 0: return False
         
@@ -125,6 +128,7 @@ class Simulator:
         return evaluate_probability(prob)
 
     def _match_probability(self, p1: Person, p2: Person) -> float:
+        """Devuelve probabilidad de match segun edad y diferencia."""
         # Prevenir emparejamientos bizarros entre un menor de edad y un adulto legal (aunque la dif sea < 20 años)
         is_p1_minor = p1.age_years < 18
         is_p2_minor = p2.age_years < 18
@@ -145,6 +149,7 @@ class Simulator:
         lam: float,
         duration: float,
     ) -> List[Tuple[float, Callable[[float], None]]]:
+        """Genera eventos de un tipo usando tiempos exponenciales."""
         if lam <= 0.0 or duration <= 0.0:
             return []
         t = 0.0
@@ -188,6 +193,7 @@ class Simulator:
         return agenda
 
     def _handle_birth(self, mother: Person) -> None:
+        """Procesa el nacimiento y actualiza la poblacion."""
         mother.is_pregnant = False
         mother.pregnant_months = 0
         
@@ -205,7 +211,7 @@ class Simulator:
             baby = Person(sex, 0)
             baby.desired_children = self._get_desired_children()
             
-            self.population.append(baby)
+            self.population_alive.append(baby)
             self.total_births += 1
             mother.children_count += 1
             if mother.partner: mother.partner.children_count += 1
@@ -213,6 +219,7 @@ class Simulator:
         self._log_event(f"👶 Nacimiento: {mother} acaba de dar a luz a {num_babies} bebé(s).")
 
     def _advance_time_state(self, delta_t: float) -> None:
+        """Avanza edades, duelos y embarazos segun el tiempo."""
         if delta_t <= 0.0:
             return
 
@@ -221,7 +228,7 @@ class Simulator:
         if self.baby_boom_active > 0:
             self.baby_boom_active = max(0.0, self.baby_boom_active - delta_t)
 
-        alive = self.get_alive_population()
+        alive = list(self.population_alive)
         for p in alive:
             p.age_months += delta_t
 
@@ -234,8 +241,13 @@ class Simulator:
                     self._handle_birth(p)
 
     def _kill_person(self, p: Person, reason: str) -> None:
+        """Mueve una persona a muertos y limpia su estado social."""
         p.is_alive = False
         self.total_deaths += 1
+        if p in self.population_alive:
+            self.population_alive.remove(p)
+        if p not in self.population_dead:
+            self.population_dead.append(p)
         self._log_event(f"💀 {reason} {p}")
         if p.partner:
             p.partner.partner = None
@@ -243,7 +255,8 @@ class Simulator:
 
     # EVENT HANDLERS -------------------------------------------------
     def _event_deaths(self, delta_t: float) -> None:
-        alive = self.get_alive_population()
+        """Evento de mortalidad natural en el periodo."""
+        alive = list(self.population_alive)
         for p in alive:
             age = p.age_years
             if age > 125:
@@ -268,8 +281,9 @@ class Simulator:
                 self._kill_person(p, "Muere por causas naturales")
 
     def _event_breakups(self, delta_t: float) -> None:
+        """Evento de separaciones de parejas."""
         monthly_breakup_prob = self._annual_to_monthly_prob(0.20)
-        alive = self.get_alive_population()
+        alive = self.population_alive
         for p in alive:
             if p.partner and p.sex == 'M':
                 if evaluate_probability(monthly_breakup_prob):
@@ -281,7 +295,8 @@ class Simulator:
                     partner.grief_time_remaining = self._get_grief_time(partner.age_years)
 
     def _event_matchmaking(self, delta_t: float) -> None:
-        alive = self.get_alive_population()
+        """Evento de formacion de nuevas parejas."""
+        alive = self.population_alive
         singles_m = [p for p in alive if p.sex == 'M' and self._wants_partner(p)]
         singles_f = [p for p in alive if p.sex == 'F' and self._wants_partner(p)]
 
@@ -301,7 +316,8 @@ class Simulator:
                 self._log_event(f"❤️ Nueva pareja formada: {m} y {f}")
 
     def _event_pregnancies(self, delta_t: float) -> None:
-        alive = self.get_alive_population()
+        """Evento de embarazos para parejas elegibles."""
+        alive = self.population_alive
         for p in alive:
             if p.sex != 'F' or p.is_pregnant:
                 continue
@@ -322,7 +338,8 @@ class Simulator:
 
     # EVENTOS GLOBALES ----------------------------------------------
     def _event_epidemic(self, delta_t: float) -> None:
-        alive = self.get_alive_population()
+        """Evento global de epidemia."""
+        alive = list(self.population_alive)
         if not alive:
             return
         self._log_event("⚠️ ¡ALERTA! Ha estallado una Epidemia Global mortal. Los más vulnerables corren peligro.")
@@ -335,7 +352,8 @@ class Simulator:
                     self._kill_person(p, "Muere por la Epidemia")
 
     def _event_war(self, delta_t: float) -> None:
-        alive = self.get_alive_population()
+        """Evento global de guerra."""
+        alive = list(self.population_alive)
         if not alive:
             return
         self._log_event("⚔️ ¡GUERRA! Ha estallado un conflicto armado. La población masculina es reclutada.")
@@ -348,7 +366,8 @@ class Simulator:
                     self._kill_person(p, "Baja civil en la guerra:")
 
     def _event_disaster(self, delta_t: float) -> None:
-        alive = self.get_alive_population()
+        """Evento global de desastre natural."""
+        alive = list(self.population_alive)
         if not alive:
             return
         self._log_event("🌪️ ¡DESASTRE NATURAL! Un terremoto devastador ha destruido viviendas.")
@@ -357,12 +376,14 @@ class Simulator:
                 self._kill_person(p, "Fallecido en el desastre natural")
 
     def _event_cure(self, delta_t: float) -> None:
+        """Evento global que activa la cura de enfermedades."""
         if not self.disease_cure_active:
             self.disease_cure_active = True
             self._log_event("🧬 ¡AVANCE MÉDICO! Se ha descubierto una cura universal para enfermedades graves.")
 
     def _event_accidents(self, delta_t: float) -> None:
-        alive = self.get_alive_population()
+        """Evento global de accidentes aleatorios."""
+        alive = list(self.population_alive)
         if not alive:
             return
         accident_victims = random.sample(alive, min(len(alive), random.randint(1, 5)))
@@ -370,12 +391,14 @@ class Simulator:
             self._kill_person(v, "Muere en un trágico accidente súbito")
 
     def _event_crisis(self, delta_t: float) -> None:
+        """Evento global de crisis economica."""
         if self.economic_crisis_active <= 0:
             duracion = random.randint(12, 48)
             self.economic_crisis_active = float(duracion)
             self._log_event(f"📉 CRISIS ECONÓMICA. Se avecinan tiempos difíciles por {duracion} meses.")
 
     def _event_baby_boom(self, delta_t: float) -> None:
+        """Evento global de baby boom."""
         if self.baby_boom_active <= 0:
             duracion = random.randint(24, 60)
             self.baby_boom_active = float(duracion)
@@ -399,4 +422,5 @@ class Simulator:
         self.current_month += duration
 
     def tick(self) -> None:
+        """Avanza exactamente un mes de simulacion."""
         self.run(1.0)

@@ -49,7 +49,7 @@ class SimulationRecord(dict[str, int | float]):
 def _count_couples(simulator: Simulator) -> int:
     """Cuenta las parejas activas en la población actual."""
     couples_set: set[tuple[int, int]] = set()
-    for person in simulator.get_alive_population():
+    for person in simulator.population_alive:
         if person.partner is not None:
             first_id = id(person)
             second_id = id(person.partner)
@@ -60,7 +60,7 @@ def _count_couples(simulator: Simulator) -> int:
 
 def _get_sex_distribution(simulator: Simulator) -> tuple[int, int]:
     """Devuelve (hombres, mujeres) vivos."""
-    alive = simulator.get_alive_population()
+    alive = simulator.population_alive
     men = sum(1 for p in alive if p.sex == "M")
     women = sum(1 for p in alive if p.sex == "F")
     return men, women
@@ -109,7 +109,7 @@ def run_single_simulation_complete(
             sim.run(MONTHS_PER_YEAR)
 
             # Capturar estado después del año
-            alive = sim.get_alive_population()
+            alive = sim.population_alive
             population = len(alive)
             men, women = _get_sex_distribution(sim)
 
