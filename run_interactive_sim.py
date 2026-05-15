@@ -7,10 +7,10 @@ def run_once(months: int, sim: Simulator) -> None:
     sim.current_year_logs.clear()
     births_before = sim.total_births
     deaths_before = sim.total_deaths
-    sim.run(months)
+    sim.run(months / 12.0)
     for e in sim.current_year_logs:
         print(" -", e)
-    alive = len(sim.population_alive)
+    alive = len(sim.get_alive_population())
     print(
         "poblacion=", alive,
         "births=", sim.total_births - births_before,
@@ -47,7 +47,7 @@ def main() -> int:
     args = parser.parse_args()
 
     sim = Simulator(initial_females=args.female, initial_males=args.male)
-    print("inicio: poblacion=", len(sim.population_alive))
+    print("inicio: poblacion=", len(sim.get_alive_population()))
 
     if args.months and args.months > 0:
         run_once(args.months, sim)

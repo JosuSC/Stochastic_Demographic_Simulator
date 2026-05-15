@@ -15,7 +15,7 @@ from engine.simulator import Simulator
 
 
 SIMULATION_YEARS = 100
-MONTHS_PER_YEAR = 12
+YEARS_PER_STEP = 1.0
 INITIAL_POPULATION_FEMALE = 500
 INITIAL_POPULATION_MALE = 500
 
@@ -49,10 +49,10 @@ class SimulationRecord(dict[str, int | float]):
 def _count_couples(simulator: Simulator) -> int:
     """Cuenta las parejas activas en la población actual."""
     couples_set: set[tuple[int, int]] = set()
-    for person in simulator.population_alive:
-        if person.partner is not None:
-            first_id = id(person)
-            second_id = id(person.partner)
+    for person in simulator.get_alive_population():
+        if person.partner_id is not None:
+            first_id = person.id
+            second_id = person.partner_id
             pair: tuple[int, int] = (min(first_id, second_id), max(first_id, second_id))
             couples_set.add(pair)
     return len(couples_set)
@@ -60,7 +60,7 @@ def _count_couples(simulator: Simulator) -> int:
 
 def _get_sex_distribution(simulator: Simulator) -> tuple[int, int]:
     """Devuelve (hombres, mujeres) vivos."""
-    alive = simulator.population_alive
+    alive = simulator.get_alive_population()
     men = sum(1 for p in alive if p.sex == "M")
     women = sum(1 for p in alive if p.sex == "F")
     return men, women
@@ -106,10 +106,10 @@ def run_single_simulation_complete(
 
             # Ejecutar el año (12 meses)
             sim.current_year_logs.clear()
-            sim.run(MONTHS_PER_YEAR)
+            sim.run(YEARS_PER_STEP)
 
             # Capturar estado después del año
-            alive = sim.population_alive
+            alive = sim.get_alive_population()
             population = len(alive)
             men, women = _get_sex_distribution(sim)
 

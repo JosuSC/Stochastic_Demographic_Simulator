@@ -13,7 +13,7 @@ def main():
     print("Población génesis creada: 1000 habitantes.\n")
     
     while True:
-        print(f"\n--- AÑO ACTUAL: {sim.current_month // 12} | Población Viva: {len(sim.population_alive)} ---")
+        print(f"\n--- AÑO ACTUAL: {int(sim.current_time_years)} | Población Viva: {len(sim.get_alive_population())} ---")
         print("Comandos disponibles:")
         print("  [1] o 'n'   -> Avanzar 1 año")
         print("  [x]         -> Avanzar 'X' cantidad de años (ejemplo: '10' avanza una década)")
@@ -32,10 +32,10 @@ def main():
             
         for y in range(años_a_simular):
             sim.current_year_logs.clear() # Limpiar logs del año viejo
-            sim.run(12) # Correr 12 meses
+            sim.run(1.0) # Correr 1 año
             
             # Imprimir el reporte del año entero si es paso a paso o si saltó años
-            year_number = sim.current_month // 12
+            year_number = int(sim.current_time_years)
             print(f"\n\n================ REPORTE DEL AÑO {year_number} ================")
             if len(sim.current_year_logs) == 0:
                 print("  Tranquilidad pacífica. Nada de mayor relevancia fuera de la monotonía.")
@@ -48,9 +48,9 @@ def main():
             
     print("\nSimulación abortada por el Arquitecto.")
     print("========== ESTADO FINAL DEL MUNDO ==========")
-    print(f"Año alcanzado: {sim.current_month // 12}")
+    print(f"Año alcanzado: {int(sim.current_time_years)}")
     print(f"Población inicial: 1000")
-    print(f"Población final viva: {len(sim.population_alive)}")
+    print(f"Población final viva: {len(sim.get_alive_population())}")
     print(f"Total histórico nacimientos: {sim.total_births}")
     print(f"Total histórico fallecimientos: {sim.total_deaths}")
 
