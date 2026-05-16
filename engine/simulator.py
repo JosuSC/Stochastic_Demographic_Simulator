@@ -1,3 +1,5 @@
+# The `Simulator` class represents a discrete event simulation engine with various event types,
+# population management, and relationship dynamics.
 from __future__ import annotations
 
 import heapq
@@ -9,6 +11,7 @@ from typing import Dict, List, Optional, Set, Tuple
 
 from models.person import Person
 from utils.probability import get_uniform, evaluate_probability, get_exponential
+from utils.tables_of_probabilities import tables, ProbabilityTable
 
 
 class EventType(str, Enum):
@@ -21,14 +24,6 @@ class EventType(str, Enum):
     PREGNANCY_START_EVENT = "PREGNANCY_START_EVENT"
     BIRTH_EVENT = "BIRTH_EVENT"
     BREAKUP_EVENT = "BREAKUP_EVENT"
-
-    EPIDEMIC_EVENT = "EPIDEMIC_EVENT"
-    WAR_EVENT = "WAR_EVENT"
-    DISASTER_EVENT = "DISASTER_EVENT"
-    CURE_EVENT = "CURE_EVENT"
-    CRISIS_EVENT = "CRISIS_EVENT"
-    BABY_BOOM_EVENT = "BABY_BOOM_EVENT"
-    ACCIDENT_EVENT = "ACCIDENT_EVENT"
 
 
 @dataclass(order=True)
@@ -60,22 +55,28 @@ class RelationshipRecord:
 
 
 class Simulator:
-    """Motor DES con FEL y tiempo continuo en años."""
+    """Motor DES con FEL y tiempo continuo en años.
 
+    El motor utiliza verificación periódica de eventos con probabilidades
+    ajustadas al tiempo real transcurrido desde la última verificación.
+
+    Formula clave: Si P_anual es la probabilidad anual de un evento,
+    la probabilidad de que ocurra en un período de dt años es:
+        P(dt) = 1 - (1 - P_anual)^dt
+    """
+
+    # Tasa de verificación de muerte: ~12 veces por año (cada mes)
     DEATH_CHECK_RATE_PER_YEAR = 12.0
-    PARTNER_DESIRE_RATE_PER_YEAR = 12.0
-    CHILD_DESIRE_RATE_PER_YEAR = 1.0
-    COUPLE_FORMATION_RATE_PER_YEAR = 6.0
+    # Tasa de verificación de deseo de pareja: ~4 veces por año (cada trimestre)
+    PARTNER_DESIRE_RATE_PER_YEAR = 4.0
+    # Tasa de verificación de deseo de hijos: ~4 veces por año
+    CHILD_DESIRE_RATE_PER_YEAR = 4.0
+    # Tasa base de intentos de formación de pareja (se ajusta dinámicamente)
+    COUPLE_FORMATION_BASE_RATE_PER_YEAR = 24.0
+    # Tasa de intentos de embarazo por pareja: ~12 veces por año (cada mes)
     PREGNANCY_ATTEMPT_RATE_PER_YEAR = 12.0
-    BREAKUP_CHECK_RATE_PER_YEAR = 12.0
-
-    EPIDEMIC_RATE_PER_YEAR = 0.01
-    WAR_RATE_PER_YEAR = 0.005
-    DISASTER_RATE_PER_YEAR = 0.01
-    CRISIS_RATE_PER_YEAR = 0.03
-    BABY_BOOM_RATE_PER_YEAR = 0.03
-    CURE_RATE_PER_YEAR = 0.005
-    ACCIDENT_RATE_PER_YEAR = 0.05
+    # Tasa de verificación de ruptura: ~6 veces por año (cada 2 meses)
+    BREAKUP_CHECK_RATE_PER_YEAR = 6.0
 
     def __init__(self, initial_females: int, initial_males: int):
         """Arma el estado inicial del simulador y crea la poblacion base."""
@@ -87,6 +88,8 @@ class Simulator:
         self.people: Dict[int, Person] = {}
         self.alive_ids: Set[int] = set()
         self.dead_ids: Set[int] = set()
+        self.population_alive: List[Person] = []
+        self.population_dead: List[Person] = []
         self.male_group: Set[int] = set()
         self.female_group: Set[int] = set()
         self.gestation_group: Dict[int, GestationRecord] = {}
@@ -101,16 +104,8 @@ class Simulator:
 
         self.current_year_logs: List[str] = []
 
-        self.disease_cure_active: bool = False
-        self.economic_crisis_active_years: float = 0.0
-        self.baby_boom_active_years: float = 0.0
-
-        self.config = {
-            "crisis_economica_enabled": False,
-            "baby_boom_enabled": False,
-            "cura_enfermedades_enabled": False,
-            "accidentes_masivo": False,
-        }
+        # Estadísticas por año para reportes
+        self.yearly_stats: List[Dict] = []
 
         self._initialize_population(initial_females, "F")
         self._initialize_population(initial_males, "M")
@@ -119,118 +114,74 @@ class Simulator:
         """Añade un evento al registro del año actual."""
         self.current_year_logs.append(message)
 
-    def _annual_to_monthly_prob(self, annual_prob: float) -> float:
-        """Convierte una probabilidad anual a mensual usando complementos."""
-        if annual_prob >= 1.0:
-            return 1.0
-        if annual_prob <= 0.0:
-            return 0.0
-        return 1.0 - math.pow(1.0 - annual_prob, 1.0 / 12.0)
-
-    def _period_prob(self, monthly_prob: float, delta_years: float) -> float:
-        """Ajusta una probabilidad mensual al periodo real transcurrido."""
-        if monthly_prob <= 0.0:
-            return 0.0
-        if monthly_prob >= 1.0:
-            return 1.0
-        if delta_years <= 0.0:
-            return 0.0
-        delta_months = delta_years * 12.0
-        return 1.0 - math.pow(1.0 - monthly_prob, delta_months)
-
     def _initialize_population(self, count: int, sex: str) -> None:
-        """Crea la poblacion inicial con edades uniformes entre 0 y 100 años."""
+        """Crea la poblacion inicial con edades uniformes entre 0 y 100 años (U(0,100))."""
         for _ in range(count):
             age_years = get_uniform(0, 100)
             person = Person(sex, age_years)
-            person.desired_children = self._get_desired_children()
+            person.desired_children = tables.desired_children_distribution.sample()
+            # Inicializar tiempo de último chequeo de muerte al inicio de la simulación
+            person.last_mortality_check_time = 0.0
             self._add_person_to_population(person)
 
     def _add_person_to_population(self, person: Person) -> None:
         """Registra una persona viva en los indices del simulador."""
         self.people[person.id] = person
-        self.alive_ids.add(person.id)
+        if person.id not in self.alive_ids:
+            self.alive_ids.add(person.id)
+            self.population_alive.append(person)
         if person.sex == "M":
             self.male_group.add(person.id)
         else:
             self.female_group.add(person.id)
 
-    def get_alive_population(self) -> List[Person]:
-        """Devuelve la lista de vivos para reportes externos."""
-        return [self.people[pid] for pid in self.alive_ids]
-
-    def _get_desired_children(self) -> int:
-        """Sortea cuantos hijos desea tener una persona segun la tabla dada."""
-        r = random.random()
-        if r < 0.292:
-            return 1
-        if r < 0.658:
-            return 2
-        if r < 0.829:
-            return 3
-        if r < 0.926:
-            return 4
-        if r < 0.975:
-            return 5
-        return 6
-
     def _get_grief_time_years(self, age_years: float) -> float:
-        """Devuelve el tiempo de duelo esperado en años."""
-        if age_years <= 15:
-            mean_months = 3
-        elif age_years <= 21:
-            mean_months = 6
-        elif age_years <= 35:
-            mean_months = 6
-        elif age_years <= 45:
-            mean_months = 12
-        elif age_years <= 60:
-            mean_months = 24
-        else:
-            mean_months = 48
-        return max(1.0 / 12.0, get_exponential(mean_months) / 12.0)
+        """Devuelve el tiempo de duelo esperado en años.
+
+        El tiempo de duelo sigue una distribución exponencial con media
+        dada por la tabla 6 del problema (en meses).
+        """
+        mean_months = tables.grief_time.get_mean_months(age_years)
+        # get_exponential(mean) devuelve un valor con esa media
+        grief_months = get_exponential(mean_months)
+        # Convertir a años, mínimo 1 mes
+        return max(1.0 / 12.0, grief_months / 12.0)
 
     def _wants_partner(self, person: Person) -> bool:
-        """Decide si alguien busca pareja en este momento."""
+        """Decide si alguien busca pareja en este momento.
+
+        Usa la probabilidad anual de la tabla y la ajusta al período
+        desde la última verificación.
+        """
         if person.partner_id is not None:
             return False
         if person.grief_time_remaining_years > 0:
             return False
 
         age = person.age_years
-        if age < 12:
-            prob = 0.0
-        elif age <= 15:
-            prob = 0.60
-        elif age <= 21:
-            prob = 0.65
-        elif age <= 35:
-            prob = 0.80
-        elif age <= 45:
-            prob = 0.60
-        elif age <= 60:
-            prob = 0.50
-        else:
-            prob = 0.20
-        return evaluate_probability(prob)
+        annual_prob = tables.partner_desire.get_annual_probability(age)
+
+        # Ajustar probabilidad al tiempo desde el último chequeo
+        delta = self.current_time_years - person.last_partner_desire_check_time
+        if delta <= 0:
+            return evaluate_probability(annual_prob)
+
+        period_prob = ProbabilityTable.period_probability_from_annual(annual_prob, delta)
+        return evaluate_probability(period_prob)
 
     def _match_probability(self, p1: Person, p2: Person) -> float:
-        """Devuelve probabilidad de match segun edad y diferencia."""
+        """Devuelve probabilidad de match segun diferencia de edad.
+
+        Regla: menores de 18 no pueden emparejarse con mayores de 18.
+        La probabilidad depende de la diferencia de edad (Tabla 5).
+        """
         is_p1_minor = p1.age_years < 18
         is_p2_minor = p2.age_years < 18
         if (is_p1_minor and not is_p2_minor) or (is_p2_minor and not is_p1_minor):
             return 0.0
 
         diff = abs(p1.age_years - p2.age_years)
-        if diff <= 5:
-            return 0.45
-        if diff <= 10:
-            return 0.40
-        if diff <= 15:
-            return 0.35
-        if diff <= 20:
-            return 0.25
-        return 0.15
+        return tables.couple_match.get_annual_probability(diff)
 
     def _pair_key(self, a_id: int, b_id: int) -> Tuple[int, int]:
         """Normaliza el par de ids para diccionarios."""
@@ -260,48 +211,43 @@ class Simulator:
 
         for person_id in list(self.alive_ids):
             person = self.people[person_id]
+            # Chequeo de muerte
             self.schedule_event(
                 self.current_time_years + random.expovariate(self.DEATH_CHECK_RATE_PER_YEAR),
                 EventType.DEATH_EVENT,
                 target_id=person.id,
             )
+            # Chequeo de deseo de pareja
             self.schedule_event(
                 self.current_time_years + random.expovariate(self.PARTNER_DESIRE_RATE_PER_YEAR),
                 EventType.PARTNER_DESIRE_EVENT,
                 target_id=person.id,
             )
+            # Chequeo de deseo de hijos
             self.schedule_event(
                 self.current_time_years + random.expovariate(self.CHILD_DESIRE_RATE_PER_YEAR),
                 EventType.CHILD_DESIRE_EVENT,
                 target_id=person.id,
             )
 
+        # Evento global de formación de parejas
         self.schedule_event(
-            self.current_time_years + random.expovariate(self.COUPLE_FORMATION_RATE_PER_YEAR),
+            self.current_time_years + random.expovariate(self._couple_formation_rate()),
             EventType.COUPLE_FORMATION_EVENT,
         )
 
-        self._schedule_next_global_event(EventType.EPIDEMIC_EVENT, self.EPIDEMIC_RATE_PER_YEAR)
-        self._schedule_next_global_event(EventType.WAR_EVENT, self.WAR_RATE_PER_YEAR)
-        self._schedule_next_global_event(EventType.DISASTER_EVENT, self.DISASTER_RATE_PER_YEAR)
+    def _couple_formation_rate(self) -> float:
+        """Calcula la tasa dinámica de formación de parejas.
 
-        if self.config.get("crisis_economica_enabled", False):
-            self._schedule_next_global_event(EventType.CRISIS_EVENT, self.CRISIS_RATE_PER_YEAR)
-        if self.config.get("baby_boom_enabled", False):
-            self._schedule_next_global_event(EventType.BABY_BOOM_EVENT, self.BABY_BOOM_RATE_PER_YEAR)
-        if self.config.get("cura_enfermedades_enabled", False):
-            self._schedule_next_global_event(EventType.CURE_EVENT, self.CURE_RATE_PER_YEAR)
-        if self.config.get("accidentes_masivo", False):
-            self._schedule_next_global_event(EventType.ACCIDENT_EVENT, self.ACCIDENT_RATE_PER_YEAR)
-
-    def _schedule_next_global_event(self, event_type: EventType, rate_per_year: float) -> None:
-        """Agenda el siguiente evento global de un tipo."""
-        if rate_per_year <= 0:
-            return
-        self.schedule_event(
-            self.current_time_years + random.expovariate(rate_per_year),
-            event_type,
-        )
+        La tasa se escala según la cantidad de personas disponibles:
+        más solteros = más intentos de emparejamiento.
+        Mínimo 24 intentos/año, escalado por el número de listos.
+        """
+        n_ready = len(self.ready_males) + len(self.ready_females)
+        if n_ready <= 0:
+            return self.COUPLE_FORMATION_BASE_RATE_PER_YEAR
+        # Al menos 2 intentos por persona lista por año, con un mínimo base
+        return max(self.COUPLE_FORMATION_BASE_RATE_PER_YEAR, n_ready * 2.0)
 
     def run(self, duration_years: float) -> None:
         """Ejecuta la simulacion en tiempo continuo durante duration_years."""
@@ -331,11 +277,6 @@ class Simulator:
         """Envejece vivos y fetos segun el salto de tiempo."""
         if delta_years <= 0.0:
             return
-
-        if self.economic_crisis_active_years > 0:
-            self.economic_crisis_active_years = max(0.0, self.economic_crisis_active_years - delta_years)
-        if self.baby_boom_active_years > 0:
-            self.baby_boom_active_years = max(0.0, self.baby_boom_active_years - delta_years)
 
         for person_id in list(self.alive_ids):
             person = self.people[person_id]
@@ -371,57 +312,45 @@ class Simulator:
             self._handle_birth_event(event)
         elif event.event_type == EventType.BREAKUP_EVENT:
             self._handle_breakup_event(event)
-        elif event.event_type == EventType.EPIDEMIC_EVENT:
-            self._handle_epidemic_event(event)
-        elif event.event_type == EventType.WAR_EVENT:
-            self._handle_war_event(event)
-        elif event.event_type == EventType.DISASTER_EVENT:
-            self._handle_disaster_event(event)
-        elif event.event_type == EventType.CURE_EVENT:
-            self._handle_cure_event(event)
-        elif event.event_type == EventType.CRISIS_EVENT:
-            self._handle_crisis_event(event)
-        elif event.event_type == EventType.BABY_BOOM_EVENT:
-            self._handle_baby_boom_event(event)
-        elif event.event_type == EventType.ACCIDENT_EVENT:
-            self._handle_accident_event(event)
 
     def _handle_death_event(self, event: Event) -> None:
-        """Chequea mortalidad de una persona y reprograma la proxima."""
+        """Chequea mortalidad de una persona y reprograma la proxima.
+
+        CORRECCIÓN PRINCIPAL:
+        - Usa el tiempo REAL desde el último chequeo como delta
+        - Aplica la fórmula correcta: P(período) = 1 - (1 - P_anual)^dt
+        - No usa el ancho de la banda de edad como delta
+        """
         if event.target_id is None:
             return
         person = self.people.get(event.target_id)
         if not person or not person.is_alive:
             return
 
+        # Muerte por vejez extrema
         if person.age_years > 125:
             self._kill_person(person, "Muere de vejez extrema")
             return
 
-        if person.age_years <= 12:
-            annual_prob = 0.0025
-        elif person.age_years <= 45:
-            annual_prob = 0.0010 if person.sex == "M" else 0.0015
-        elif person.age_years <= 76:
-            annual_prob = 0.0030 if person.sex == "M" else 0.0035
+        # Obtener probabilidad anual según edad y sexo
+        if person.sex == "M":
+            annual_prob = tables.death_male.get_annual_probability(person.age_years)
         else:
-            annual_prob = 0.070 if person.sex == "M" else 0.065
+            annual_prob = tables.death_female.get_annual_probability(person.age_years)
 
-        if self.disease_cure_active:
-            annual_prob *= 0.60
-        if self.economic_crisis_active_years > 0:
-            annual_prob *= 0.5
-        if self.baby_boom_active_years > 0:
-            annual_prob *= 1.5
-
+        # Calcular tiempo real desde el último chequeo de mortalidad
         delta_years = self.current_time_years - person.last_mortality_check_time
-        monthly_prob = self._annual_to_monthly_prob(annual_prob)
-        period_prob = self._period_prob(monthly_prob, delta_years)
         person.last_mortality_check_time = self.current_time_years
-        if evaluate_probability(period_prob):
-            self._kill_person(person, "Muere por causas naturales")
-            return
 
+        # Probabilidad de morir en el período transcurrido:
+        # P(dt) = 1 - (1 - P_anual)^dt
+        if delta_years > 0 and annual_prob > 0:
+            period_prob = 1.0 - math.pow(1.0 - annual_prob, delta_years)
+            if evaluate_probability(period_prob):
+                self._kill_person(person, "Muere por causas naturales")
+                return
+
+        # Reprogramar próximo chequeo de muerte
         self.schedule_event(
             self.current_time_years + random.expovariate(self.DEATH_CHECK_RATE_PER_YEAR),
             EventType.DEATH_EVENT,
@@ -458,7 +387,12 @@ class Simulator:
         if not person or not person.is_alive:
             return
 
-        person.wants_children = person.children_count < person.desired_children
+        # Solo las personas en edad fértil pueden desear hijos
+        if person.age_years < 12:
+            person.wants_children = False
+        else:
+            person.wants_children = person.children_count < person.desired_children
+
         person.last_child_desire_check_time = self.current_time_years
         self.schedule_event(
             self.current_time_years + random.expovariate(self.CHILD_DESIRE_RATE_PER_YEAR),
@@ -467,26 +401,53 @@ class Simulator:
         )
 
     def _handle_couple_formation_event(self, event: Event) -> None:
-        """Intenta formar una nueva pareja y reprograma el evento global."""
-        if self.ready_males and self.ready_females:
+        """Intenta formar una nueva pareja y reprograma el evento global.
+
+        CORRECCIÓN: La tasa de formación es dinámica, escalada por el
+        número de personas disponibles, para que haya suficientes
+        intentos de emparejamiento.
+        """
+        # Intentar formar múltiples parejas por evento para mayor eficiencia
+        attempts = max(1, min(len(self.ready_males), len(self.ready_females), 3))
+
+        for _ in range(attempts):
+            if not self.ready_males or not self.ready_females:
+                break
+
             male_id = random.choice(tuple(self.ready_males))
             female_id = random.choice(tuple(self.ready_females))
             male = self.people[male_id]
             female = self.people[female_id]
 
+            # Verificar que siguen vivos y disponibles
+            if not male.is_alive or not female.is_alive:
+                self.ready_males.discard(male_id)
+                self.ready_females.discard(female_id)
+                continue
+            if male.partner_id is not None or female.partner_id is not None:
+                self._update_ready_set(male)
+                self._update_ready_set(female)
+                continue
+
             base_prob = self._match_probability(male, female)
-            noise = get_uniform(0.8, 1.2)
+            # Pequeño ruido para variabilidad
+            noise = get_uniform(0.85, 1.15)
             prob = min(1.0, base_prob * noise)
             if evaluate_probability(prob):
                 self._form_couple(male, female)
 
+        # Reprogramar con tasa dinámica
         self.schedule_event(
-            self.current_time_years + random.expovariate(self.COUPLE_FORMATION_RATE_PER_YEAR),
+            self.current_time_years + random.expovariate(self._couple_formation_rate()),
             EventType.COUPLE_FORMATION_EVENT,
         )
 
     def _handle_pregnancy_attempt_event(self, event: Event) -> None:
-        """Procesa un intento de embarazo en una pareja."""
+        """Procesa un intento de embarazo en una pareja.
+
+        CORRECCIÓN: Usa la fórmula correcta de probabilidad periódica
+        con el tiempo real desde el último intento.
+        """
         pair_key_raw = event.payload.get("pair_key")
         if not isinstance(pair_key_raw, str):
             return
@@ -510,6 +471,7 @@ class Simulator:
             female = partner_b
             male = partner_a
 
+        # Verificar condiciones previas
         if female.is_pregnant:
             self._reschedule_pregnancy_attempt(relationship)
             return
@@ -517,33 +479,24 @@ class Simulator:
             self._reschedule_pregnancy_attempt(relationship)
             return
 
+        # Calcular probabilidad de embarazo
         age = female.age_years
-        if age < 12:
-            annual_prob = 0.0
-        elif age <= 15:
-            annual_prob = 0.20
-        elif age <= 21:
-            annual_prob = 0.45
-        elif age <= 35:
-            annual_prob = 0.80
-        elif age <= 45:
-            annual_prob = 0.40
-        elif age <= 60:
-            annual_prob = 0.20
-        else:
-            annual_prob = 0.05
+        annual_prob = tables.pregnancy.get_annual_probability(age)
 
+        # Tiempo desde el último intento
         delta_years = self.current_time_years - relationship.last_pregnancy_attempt_time
-        monthly_prob = self._annual_to_monthly_prob(annual_prob)
-        period_prob = self._period_prob(monthly_prob, delta_years)
         relationship.last_pregnancy_attempt_time = self.current_time_years
-        if evaluate_probability(period_prob):
-            self.schedule_event(
-                self.current_time_years,
-                EventType.PREGNANCY_START_EVENT,
-                target_id=female.id,
-                payload={"father_id": male.id},
-            )
+
+        if delta_years > 0 and annual_prob > 0:
+            # Probabilidad de quedar embarazada en el período transcurrido
+            period_prob = 1.0 - math.pow(1.0 - annual_prob, delta_years)
+            if evaluate_probability(period_prob):
+                self.schedule_event(
+                    self.current_time_years,
+                    EventType.PREGNANCY_START_EVENT,
+                    target_id=female.id,
+                    payload={"father_id": male.id},
+                )
 
         self._reschedule_pregnancy_attempt(relationship)
 
@@ -570,25 +523,16 @@ class Simulator:
         if not isinstance(father_id, int):
             father_id = None
 
-        r = random.random()
-        if r < 0.686:
-            num_babies = 1
-        elif r < 0.862:
-            num_babies = 2
-        elif r < 0.941:
-            num_babies = 3
-        elif r < 0.980:
-            num_babies = 4
-        else:
-            num_babies = 5
+        num_babies = tables.babies_distribution.sample()
 
         mother.is_pregnant = True
 
         for _ in range(num_babies):
             sex = "M" if evaluate_probability(0.5) else "F"
             gestation_years = random.uniform(7, 10) / 12.0
-            fetus = Person(sex, -gestation_years)
-            fetus.desired_children = self._get_desired_children()
+            # Feto con edad negativa (aún no nacido) y is_alive = False
+            fetus = Person(sex, -gestation_years, is_alive=False)
+            fetus.desired_children = tables.desired_children_distribution.sample()
             self.people[fetus.id] = fetus
             self.gestation_group[fetus.id] = GestationRecord(
                 fetus_id=fetus.id,
@@ -619,6 +563,12 @@ class Simulator:
         fetus = self.people[fetus_id]
         fetus.age_years = max(0.0, fetus.age_years)
         fetus.is_alive = True
+        # CORRECCIÓN: Inicializar el tiempo de último chequeo de muerte
+        # al momento actual, no a 0.0 (evita delta enorme en primer chequeo)
+        fetus.last_mortality_check_time = self.current_time_years
+        fetus.last_partner_desire_check_time = self.current_time_years
+        fetus.last_child_desire_check_time = self.current_time_years
+
         self._add_person_to_population(fetus)
         self.total_births += 1
 
@@ -638,6 +588,7 @@ class Simulator:
 
         self._log_event(f"👶 Nacimiento: {fetus} llega al mundo.")
 
+        # Agendar eventos para el recién nacido
         self.schedule_event(
             self.current_time_years + random.expovariate(self.DEATH_CHECK_RATE_PER_YEAR),
             EventType.DEATH_EVENT,
@@ -655,7 +606,11 @@ class Simulator:
         )
 
     def _handle_breakup_event(self, event: Event) -> None:
-        """Evalua y ejecuta la ruptura de una pareja."""
+        """Evalua y ejecuta la ruptura de una pareja.
+
+        CORRECCIÓN: Usa la fórmula correcta de probabilidad periódica
+        con el tiempo real desde el último chequeo.
+        """
         pair_key_raw = event.payload.get("pair_key")
         if not isinstance(pair_key_raw, str):
             return
@@ -671,101 +626,25 @@ class Simulator:
         if not partner_a.is_alive or not partner_b.is_alive:
             return
 
-        monthly_breakup_prob = self._annual_to_monthly_prob(0.20)
+        # Probabilidad anual de ruptura (constante 0.20)
+        annual_breakup = tables.breakup.get_annual_probability(0.0)
+
+        # Tiempo real desde el último chequeo de ruptura
         delta_years = self.current_time_years - relationship.last_breakup_check_time
-        period_prob = self._period_prob(monthly_breakup_prob, delta_years)
         relationship.last_breakup_check_time = self.current_time_years
-        if evaluate_probability(period_prob):
-            self._dissolve_relationship(pair_key, "💔 Ruptura de pareja")
-            return
+
+        if delta_years > 0 and annual_breakup > 0:
+            # Probabilidad de ruptura en el período transcurrido
+            period_prob = 1.0 - math.pow(1.0 - annual_breakup, delta_years)
+            if evaluate_probability(period_prob):
+                self._dissolve_relationship(pair_key, "💔 Ruptura de pareja")
+                return
 
         self.schedule_event(
             self.current_time_years + random.expovariate(self.BREAKUP_CHECK_RATE_PER_YEAR),
             EventType.BREAKUP_EVENT,
             payload={"pair_key": f"{pair_key[0]}-{pair_key[1]}"},
         )
-
-    def _handle_epidemic_event(self, event: Event) -> None:
-        """Evento global de epidemia."""
-        if not self.alive_ids:
-            return
-        self._log_event("⚠️ ¡ALERTA! Ha estallado una Epidemia Global mortal. Los más vulnerables corren peligro.")
-        for person_id in list(self.alive_ids):
-            person = self.people[person_id]
-            if person.age_years < 3 or person.age_years > 65:
-                if evaluate_probability(0.15):
-                    self._kill_person(person, "Muere por la Epidemia")
-            else:
-                if evaluate_probability(0.02):
-                    self._kill_person(person, "Muere por la Epidemia")
-
-        self._schedule_next_global_event(EventType.EPIDEMIC_EVENT, self.EPIDEMIC_RATE_PER_YEAR)
-
-    def _handle_war_event(self, event: Event) -> None:
-        """Evento global de guerra."""
-        if not self.alive_ids:
-            return
-        self._log_event("⚔️ ¡GUERRA! Ha estallado un conflicto armado. La población masculina es reclutada.")
-        for person_id in list(self.alive_ids):
-            person = self.people[person_id]
-            if person.sex == "M" and 18 <= person.age_years <= 45:
-                if evaluate_probability(0.20):
-                    self._kill_person(person, "Soldado caído en combate:")
-            else:
-                if evaluate_probability(0.01):
-                    self._kill_person(person, "Baja civil en la guerra:")
-
-        self._schedule_next_global_event(EventType.WAR_EVENT, self.WAR_RATE_PER_YEAR)
-
-    def _handle_disaster_event(self, event: Event) -> None:
-        """Evento global de desastre natural."""
-        if not self.alive_ids:
-            return
-        self._log_event("🌪️ ¡DESASTRE NATURAL! Un terremoto devastador ha destruido viviendas.")
-        for person_id in list(self.alive_ids):
-            person = self.people[person_id]
-            if evaluate_probability(0.03):
-                self._kill_person(person, "Fallecido en el desastre natural")
-
-        self._schedule_next_global_event(EventType.DISASTER_EVENT, self.DISASTER_RATE_PER_YEAR)
-
-    def _handle_cure_event(self, event: Event) -> None:
-        """Evento global que activa la cura de enfermedades."""
-        if not self.disease_cure_active:
-            self.disease_cure_active = True
-            self._log_event("🧬 ¡AVANCE MÉDICO! Se ha descubierto una cura universal para enfermedades graves.")
-
-        self._schedule_next_global_event(EventType.CURE_EVENT, self.CURE_RATE_PER_YEAR)
-
-    def _handle_crisis_event(self, event: Event) -> None:
-        """Evento global de crisis economica."""
-        if self.economic_crisis_active_years <= 0:
-            duracion_meses = random.randint(12, 48)
-            self.economic_crisis_active_years = duracion_meses / 12.0
-            self._log_event(f"📉 CRISIS ECONÓMICA. Se avecinan tiempos difíciles por {duracion_meses} meses.")
-
-        self._schedule_next_global_event(EventType.CRISIS_EVENT, self.CRISIS_RATE_PER_YEAR)
-
-    def _handle_baby_boom_event(self, event: Event) -> None:
-        """Evento global de baby boom."""
-        if self.baby_boom_active_years <= 0:
-            duracion_meses = random.randint(24, 60)
-            self.baby_boom_active_years = duracion_meses / 12.0
-            self._log_event(f"🎉 ÉPOCA DORADA. Baby Boom activo por {duracion_meses} meses.")
-
-        self._schedule_next_global_event(EventType.BABY_BOOM_EVENT, self.BABY_BOOM_RATE_PER_YEAR)
-
-    def _handle_accident_event(self, event: Event) -> None:
-        """Evento global de accidentes aleatorios."""
-        if not self.alive_ids:
-            return
-        victim_count = min(len(self.alive_ids), random.randint(1, 5))
-        victims = random.sample(list(self.alive_ids), victim_count)
-        for person_id in victims:
-            person = self.people[person_id]
-            self._kill_person(person, "Muere en un trágico accidente súbito")
-
-        self._schedule_next_global_event(EventType.ACCIDENT_EVENT, self.ACCIDENT_RATE_PER_YEAR)
 
     def _form_couple(self, male: Person, female: Person) -> None:
         """Crea una relacion entre dos personas."""
@@ -812,7 +691,7 @@ class Simulator:
 
     def _update_ready_set(self, person: Person) -> None:
         """Mantiene sets de solteros listos para emparejar."""
-        if person.partner_id is not None or not person.wants_partner:
+        if person.partner_id is not None or not person.wants_partner or not person.is_alive:
             self.ready_males.discard(person.id)
             self.ready_females.discard(person.id)
             return
@@ -829,6 +708,10 @@ class Simulator:
         self.total_deaths += 1
         self.alive_ids.discard(person.id)
         self.dead_ids.add(person.id)
+        if person in self.population_alive:
+            self.population_alive.remove(person)
+        if person not in self.population_dead:
+            self.population_dead.append(person)
         self.ready_males.discard(person.id)
         self.ready_females.discard(person.id)
         if person.sex == "M":
@@ -845,3 +728,39 @@ class Simulator:
     def tick(self) -> None:
         """Avanza exactamente un mes de simulacion (1/12 de año)."""
         self.run(1.0 / 12.0)
+
+    def get_statistics(self) -> Dict:
+        """Devuelve estadísticas actuales de la simulación."""
+        alive = [p for p in self.population_alive if p.is_alive]
+        if not alive:
+            return {
+                "time_years": self.current_time_years,
+                "population": 0,
+                "males": 0,
+                "females": 0,
+                "avg_age": 0,
+                "births": self.total_births,
+                "deaths": self.total_deaths,
+                "couples": len(self.relationships),
+                "pregnant": sum(1 for p in alive if p.is_pregnant),
+            }
+
+        males = [p for p in alive if p.sex == "M"]
+        females = [p for p in alive if p.sex == "F"]
+        ages = [p.age_years for p in alive]
+
+        return {
+            "time_years": round(self.current_time_years, 2),
+            "population": len(alive),
+            "males": len(males),
+            "females": len(females),
+            "avg_age": round(sum(ages) / len(ages), 1) if ages else 0,
+            "max_age": round(max(ages), 1) if ages else 0,
+            "min_age": round(min(ages), 1) if ages else 0,
+            "births": self.total_births,
+            "deaths": self.total_deaths,
+            "couples": len(self.relationships),
+            "pregnant": sum(1 for p in alive if p.is_pregnant),
+            "ready_males": len(self.ready_males),
+            "ready_females": len(self.ready_females),
+        }

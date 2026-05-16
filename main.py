@@ -13,7 +13,7 @@ def main():
     print("Población génesis creada: 1000 habitantes.\n")
     
     while True:
-        print(f"\n--- AÑO ACTUAL: {int(sim.current_time_years)} | Población Viva: {len(sim.get_alive_population())} ---")
+        print(f"\n--- AÑO ACTUAL: {int(sim.current_time_years)} | Población Viva: {len(sim.population_alive)} ---")
         print("Comandos disponibles:")
         print("  [1] o 'n'   -> Avanzar 1 año")
         print("  [x]         -> Avanzar 'X' cantidad de años (ejemplo: '10' avanza una década)")
@@ -50,7 +50,7 @@ def main():
     print("========== ESTADO FINAL DEL MUNDO ==========")
     print(f"Año alcanzado: {int(sim.current_time_years)}")
     print(f"Población inicial: 1000")
-    print(f"Población final viva: {len(sim.get_alive_population())}")
+    print(f"Población final viva: {len(sim.population_alive)}")
     print(f"Total histórico nacimientos: {sim.total_births}")
     print(f"Total histórico fallecimientos: {sim.total_deaths}")
 

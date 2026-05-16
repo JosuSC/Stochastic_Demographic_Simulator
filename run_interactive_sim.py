@@ -10,7 +10,7 @@ def run_once(months: int, sim: Simulator) -> None:
     sim.run(months / 12.0)
     for e in sim.current_year_logs:
         print(" -", e)
-    alive = len(sim.get_alive_population())
+    alive = len(sim.population_alive)
     print(
         "poblacion=", alive,
         "births=", sim.total_births - births_before,
@@ -42,12 +42,12 @@ def interactive_loop(sim: Simulator) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--months", type=int, default=0)
-    parser.add_argument("--female", type=int, default=500)
-    parser.add_argument("--male", type=int, default=500)
+    parser.add_argument("--female", type=int, default=100)
+    parser.add_argument("--male", type=int, default=100)
     args = parser.parse_args()
 
     sim = Simulator(initial_females=args.female, initial_males=args.male)
-    print("inicio: poblacion=", len(sim.get_alive_population()))
+    print("inicio: poblacion=", len(sim.population_alive))
 
     if args.months and args.months > 0:
         run_once(args.months, sim)
