@@ -62,16 +62,28 @@ def export_raw_runs(results: Sequence[SimulationRunResult], output_file: Path) -
     logging.info("Corridas crudas exportadas a %s", output_file)
 
 
-def main() -> int:
-    """Ejecuta el flujo completo de simulación y análisis."""
+def main(
+    num_runs: int = 100,
+    seed: int | None = 42,
+    raw_output: Path = Path("simulation_runs.csv"),
+    stats_output: Path = Path("simulation_statistics.csv"),
+) -> int:
+    """Ejecuta el flujo completo de simulación y análisis.
+
+    Args:
+        num_runs: Número de corridas independientes a ejecutar.
+        seed: Semilla base para reproducibilidad.
+        raw_output: Ruta para CSV con corridas crudas.
+        stats_output: Ruta para CSV con estadísticas agregadas.
+    """
 
     # 1. Registrar el adaptador como el ejecutor de simulaciones
     logging.info("Registrando adaptador de simulación...")
     register_simulation_runner(run_single_simulation_complete)
 
-    # 2. Ejecutar 100 corridas independientes con semilla reproducible
-    logging.info("Ejecutando 100 corridas de simulación...")
-    results = run_multiple_simulations(num_runs=100, seed=42)
+    # 2. Ejecutar corridas independientes con semilla reproducible
+    logging.info("Ejecutando %d corridas de simulación...", num_runs)
+    results = run_multiple_simulations(num_runs=num_runs, seed=seed)
 
     # 3. Agregar estadísticas anuales
     logging.info("Agregando estadísticas anuales...")
@@ -85,13 +97,11 @@ def main() -> int:
         return 1
 
     # 3b. Exportar detalle crudo para histogramas y análisis de distribución
-    raw_output_file = Path("simulation_runs.csv")
-    export_raw_runs(results, raw_output_file)
+    export_raw_runs(results, Path(raw_output))
 
     # 4. Exportar a CSV
-    output_file = Path("simulation_statistics.csv")
-    logging.info("Exportando resultados a %s", output_file)
-    export_statistics(statistics_df, output_file)
+    logging.info("Exportando resultados a %s", stats_output)
+    export_statistics(statistics_df, Path(stats_output))
 
     # 5. Resumen final
     logging.info("=== RESUMEN FINAL ===")
@@ -104,4 +114,13 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Run simulation analysis and export statistics.")
+    parser.add_argument("--runs", type=int, default=100, help="Number of independent runs")
+    parser.add_argument("--seed", type=int, default=42, help="Base RNG seed (optional)")
+    parser.add_argument("--raw-output", type=Path, default=Path("simulation_runs.csv"), help="CSV for raw runs")
+    parser.add_argument("--stats-output", type=Path, default=Path("simulation_statistics.csv"), help="CSV for aggregated statistics")
+
+    args = parser.parse_args()
+    raise SystemExit(main(num_runs=args.runs, seed=args.seed, raw_output=args.raw_output, stats_output=args.stats_output))

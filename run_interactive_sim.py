@@ -42,8 +42,8 @@ def interactive_loop(sim: Simulator) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--months", type=int, default=0)
-    parser.add_argument("--female", type=int, default=100)
-    parser.add_argument("--male", type=int, default=100)
+    parser.add_argument("--female", type=int, default=250)
+    parser.add_argument("--male", type=int, default=250)
     args = parser.parse_args()
 
     sim = Simulator(initial_females=args.female, initial_males=args.male)
