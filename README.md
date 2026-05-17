@@ -1,100 +1,85 @@
-# 🌍 Stochastic Demographic Simulator
+# Stochastic Demographic Simulator — Portfolio Showcase
 
-![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)
-![Paradigm](https://img.shields.io/badge/paradigm-Agent--Based_Modeling-orange.svg)
-![Type](https://img.shields.io/badge/type-Discrete_Event_Simulation-success.svg)
+Concise, production-oriented description: a custom-built Discrete Event Simulation (DES) + Agent-Based Model (ABM) implemented in Python to study long-term demographic dynamics. Designed and engineered to demonstrate advanced skills in stochastic modelling, algorithmic optimization, and software architecture.
 
-An interactive, **Agent-Based Model (ABM)** and **Discrete Event Simulator (DES)** written in Python. This engine models the demographic evolution of a localized population over a century (100 years). It leverages stochastic probabilities, mathematical distributions, and object-oriented programming to simulate the highly complex, interconnected life cycles of individual agents within a macroscopic environment.
+**Highlights (what this project shows off)**
 
-This project was built to demonstrate advanced proficiency in applied mathematics, algorithmic optimization, and system architecture.
+- Applied probability & simulation: inverse-transform sampling, Bernoulli trials, and hazard-rate modeling.
+- Algorithmic design: efficient event scheduling (min-heap priority queue) and optimized pairing logic for matchmaking at scale.
+- Statistical rigor: reproducible Monte Carlo pipeline, aggregation into confidence intervals, and interactive visualization via Streamlit.
+- Engineering practices: modular architecture, unit tests, and dependency management.
 
-## 🚀 Key Features
+**Tech stack**
 
-* **Agent-Based Modeling (ABM):** Each individual is tracked as an independent entity (`Person`) via Object-Oriented design, retaining its own unique memory state, partner references, age, offspring count, and grief periods.
-* **Deterministic & Stochastic Engine:** Powered by a custom monthly-tick simulation engine, computing probabilities concurrently for thousands of interacting agents.
-* **Complex Matchmaking Algorithm:** Connects single agents dynamically based on age-difference matrices and conditional desire probabilities, achieving $O(N)$ efficiency.
-* **Real-World Demographic Mechanics:** Accurately models birth rates, multiple-birth probabilities, and mortality rates utilizing Uniform and Exponential distributions.
-* **Macro-World Events:** Integrates environmental randomness such as Global Pandemics, Economic Crises, Medical Breakthroughs, and Baby Booms that scale dynamic variables at runtime.
-* **Interactive CLI / REPL:** Features an immersive command-line interface that allows the user to step through the simulation year-by-year, decade-by-decade, while printing real-time analytical logs.
+- Python 3.10+ (typed where useful)
+- NumPy, pandas
+- Streamlit for dashboarding
+- Pytest for core tests
+- tqdm for progress and Monte Carlo runs
 
-## 📐 Mathematical Foundation
-The engine relies on a strict theoretical foundation to prevent mathematical anomalies (e.g., immediate population collapse):
+**Repository structure**
 
-1. **Probability Normalization:** Original annual rates are mathematically projected into monthly temporal steps using standard complement functions ($P_{monthly} = 1 - \sqrt[12]{1 - P_{annual}}$) to accurately frame Bernoulli trials.
-2. **Exponential Grief Modeling:** Upon a breakup or the death of a partner, agents enter an emotional recovery period modeled via an Exponential distribution where the scale parameter $\lambda$ depends on their biological age.
+See the main components:
 
-## 📂 Architecture & Project Structure
+- [main.py](main.py) — Interactive entry point / REPL
+- [run_analysis.py](run_analysis.py) — Orchestrates Monte Carlo runs and exports statistics
+- [dashboard.py](dashboard.py) — Streamlit dashboard for visualization
+- [engine/simulator.py](engine/simulator.py) — Core DES engine and event loop
+- [models/person.py](models/person.py) — Agent data model
+- [utils/probability.py](utils/probability.py) — Sampling helpers
 
-The project relies on a modular, decoupled architecture, entirely independent of external simulation libraries like *SimPy*, proving the capability to build low-level engines from scratch.
+Quickstart
 
-```text
-/project_root
-├── main.py                 # Interactive CLI Entry Point & REPL
-├── models/
-│   └── person.py           # POJO / Data Class representing an Agent's state
-├── engine/
-│   └── simulator.py        # Core DES Engine, Tick Processor, and Matchmaker
-├── utils/
-│   └── probability.py      # Abstracted Stochastic wrappers (Uniform, Exponential, Bernoulli)
-└── tests/
-    └── test_simulation.py  # Pytest suite
+1. Clone the repository:
+
+```bash
+git clone https://github.com/JosuSC/Stochastic_Demographic_Simulator.git
+cd Stochastic_Demographic_Simulator
 ```
 
-## ⚙️ Installation & Usage
+2. (Recommended) Create and activate a virtual environment, then install requirements:
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/your-username/Stochastic_Demographic_Simulator.git
-   cd Stochastic_Demographic_Simulator
-   ```
+```bash
+python -m venv .venv
+.\.venv\Scripts\activate   # Windows
+pip install -r requirements.txt
+```
 
-2. **Run the Interactive Simulation**
-   No external UI dependencies required. Just pure Python runtime:
-   ```bash
-   python main.py
-   ```
+3. Run a single interactive simulation (REPL):
 
-3. **CLI Commands**
-   Once inside the REPL loop, you can instruct the engine with:
-   * `n` or `1` : Advance the simulation by exactly 1 year.
-   * `[Any Integer]` : Advance the simulation by $X$ years recursively.
-   * `q` or `exit` : Abort the current timeline and trigger the Final Demographic Report.
+```bash
+python main.py
+```
 
-## 📈 Future Enhancements
-- **Spatial Grid:** Incorporate a 2D Cartesian grid or graph network to apply geographic constraints to matchmaking.
-- **Genetic Traits:** Pass inherited metadata (disease resistance, fertility caps) from parents to offspring.
-- **Parallel Computing:** Migrate the `tick()` cycle to Python's `multiprocessing` to handle populations exceeding 1,000,000 agents.
-
-## 📊 Statistical Analysis and Visualization
-
-The project now includes a reproducible statistical pipeline and a professional dashboard.
-
-### Generate statistics
+4. Run the statistical pipeline (default: 100 Monte Carlo runs):
 
 ```bash
 python run_analysis.py
 ```
 
-This produces:
+Outputs
 
-- `simulation_statistics.csv` with yearly aggregated statistics
-- `simulation_runs.csv` with raw annual records for each simulation run
+- `simulation_statistics.csv` — yearly aggregated metrics (mean, std, CI)
+- `simulation_runs.csv` — raw per-run yearly records for deeper analysis
 
-### Launch the dashboard
+5. Launch the dashboard:
 
 ```bash
 streamlit run dashboard.py
 ```
 
-The dashboard includes:
+Why include this in a portfolio
 
-- Population mean with 95% confidence interval
-- Births vs deaths
-- Net growth and annual growth rate
-- Population structure by sex
-- Stability indicators
-- Decade-based distribution charts
-- Final distribution histogram when raw run data is available
+- Demonstrates building a non-trivial simulation engine from first principles (no SimPy). 
+- Shows ability to design reproducible experiments and present results with interpretable statistical summaries.
+- Highlights competency in performance-aware Python coding and end-to-end analysis.
 
----
-*Created as an academic showcase of computational simulation logic, software architecture, and stochastic modeling.*
+Contributing
+
+Contributions and bug reports are welcome. Open an issue or submit a PR with clear motivation and tests.
+
+License & author
+
+This repository is provided for portfolio and academic purposes. Author: Josué Javier Senarega Claro.
+
+
