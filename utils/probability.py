@@ -1,20 +1,21 @@
 import random
-from typing import List, Tuple
+
 
 def get_uniform(min_val: float, max_val: float) -> float:
-    """Devuelve un valor de distribución uniforme."""
+    """Draw a value from a uniform distribution."""
     return random.uniform(min_val, max_val)
 
+
 def get_exponential(mean: float) -> float:
-    """Devuelve un valor de distribución exponencial con la media dada.
-    
-    Usa random.expovariate(lambd) donde lambd = 1/mean,
-    lo cual produce una distribución con la media especificada.
+    """Draw a value from an exponential distribution with the given mean.
+
+    Uses random.expovariate(lambda=1/mean), which gives the requested mean.
     """
     if mean <= 0:
         return 0.0
     return random.expovariate(1.0 / mean)
 
+
 def evaluate_probability(prob: float) -> bool:
-    """Evalúa un suceso de Bernoulli con probabilidad prob."""
+    """Run a Bernoulli trial with probability prob."""
     return random.random() < prob

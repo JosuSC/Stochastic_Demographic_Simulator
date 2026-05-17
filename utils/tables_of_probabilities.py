@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Callable
+from typing import List, Optional
 import bisect
 import random
 import math
@@ -19,10 +19,12 @@ class AgeProbabilityRange:
 
 @dataclass
 class ProbabilityTable:
-    """Object-oriented table storing age/difference ranges with probabilities.
+    """Table of age or difference ranges with probabilities.
 
-    - Stores ranges as objects (not tuples)
-    - Provides type-safe lookups and DES-aware conversions
+    It also provides a few DES-friendly probability conversions:
+    - Annual to monthly: P(monthly) = 1 - (1 - P(annual))^(1/12)
+    - Period from annual: P(dt) = 1 - (1 - P(annual))^dt
+    - Period from monthly: P(dt) = 1 - (1 - P(monthly))^(dt*12)
     """
     ranges: List[AgeProbabilityRange] = field(default_factory=list)
 
@@ -30,6 +32,7 @@ class ProbabilityTable:
         self.ranges = sorted(self.ranges, key=lambda r: (r.min_age, r.max_age))
 
     def get_annual_probability(self, key_age: float) -> float:
+        """Return the annual probability for a given age or difference."""
         for r in self.ranges:
             if r.contains(key_age):
                 return r.probability
@@ -40,12 +43,13 @@ class ProbabilityTable:
         return self.annual_to_monthly(annual)
 
     def period_probability(self, key_age: float, delta_years: float) -> float:
+        """Compute the probability of an event during delta_years from an annual rate."""
         annual = self.get_annual_probability(key_age)
         return self.period_probability_from_annual(annual, delta_years)
 
     @staticmethod
     def annual_to_monthly(annual_prob: float) -> float:
-        """Convierte probabilidad anual a mensual: P(mes) = 1 - (1 - P(anual))^(1/12)"""
+        """Convert an annual probability into a monthly one."""
         if annual_prob <= 0.0:
             return 0.0
         if annual_prob >= 1.0:
@@ -54,14 +58,13 @@ class ProbabilityTable:
 
     @staticmethod
     def period_probability_from_annual(annual_prob: float, delta_years: float) -> float:
-        """Calcula la probabilidad de que un evento ocurra en un período de delta_years,
-        dada una probabilidad anual.
+        """Compute the probability of an event over delta_years from an annual rate.
 
-        Formula: P(período) = 1 - (1 - P(anual))^(delta_years)
+        Formula: P(dt) = 1 - (1 - P(annual))^dt
 
-        Esta es la forma correcta de acumular probabilidad en un DES:
-        si la probabilidad anual es p, la probabilidad de que el evento
-        ocurra AL MENOS UNA VEZ en delta_years es 1-(1-p)^delta.
+        This is the standard way to accumulate probability over time: the
+        chance of happening at least once is one minus the chance of never
+        happening.
         """
         if annual_prob <= 0.0:
             return 0.0
@@ -73,15 +76,12 @@ class ProbabilityTable:
 
     @staticmethod
     def period_probability_from_monthly(monthly_prob: float, delta_years: float) -> float:
-        """Calcula la probabilidad de que un evento ocurra en un período de delta_years,
-        dada una probabilidad mensual.
+        """Compute the probability of an event over delta_years from a monthly rate.
 
-        Formula: P(período) = 1 - (1 - P(mensual))^(delta_years * 12)
+        Formula: P(dt) = 1 - (1 - P(monthly))^(dt*12)
 
-        El evento se verifica mensualmente con probabilidad monthly_prob.
-        En delta_years hay delta_years*12 meses, y la probabilidad de que
-        NO ocurra en ninguno es (1-p)^(n_meses), por lo que la probabilidad
-        de que ocurra AL MENOS UNA VEZ es 1-(1-p)^(n_meses).
+        The event is checked once per month with probability monthly_prob.
+        Over delta_years, that means delta_years * 12 checks.
         """
         if monthly_prob <= 0.0:
             return 0.0
@@ -130,7 +130,6 @@ class DiscreteDistribution:
     _values: List[int] = field(init=False, default_factory=list)
 
     def __post_init__(self) -> None:
-        # normalize and build cumulative
         total = sum(e.probability for e in self.entries)
         if total <= 0:
             raise ValueError("Distribution must have positive total probability")
@@ -168,40 +167,29 @@ class ProbabilityTablesRegistry:
 
 def _make_default_registry() -> ProbabilityTablesRegistry:
     # ============================================================================
-    # DEATH PROBABILITIES (Tabla 1 del problema)
+    # DEATH PROBABILITIES (Table 1 from the problem statement)
     # ============================================================================
-    # La tabla del problema da probabilidades de morir DENTRO de cada rango de edad.
-    # Ejemplo: Hombre 0-12 tiene probabilidad 0.25 de morir en esos 12 años.
-    #
-    # Para convertir a probabilidad ANUAL usamos:
-    #   P(rango) = 1 - (1 - P_anual)^(anios_del_rango)
-    #   => P_anual = 1 - (1 - P_rango)^(1/anios_del_rango)
-    #
-    # Verificacion:
-    #   Hombre 0-12: P_anual = 1 - (1-0.25)^(1/12) = 0.02394
-    #   => P(12 años) = 1 - (1-0.02394)^12 = 1 - 0.75 = 0.25 ✓
+    # The original data gives block probabilities, so we convert them to annual
+    # rates before using them in the simulator.
     # ============================================================================
 
-    # Hombre
     death_male = ProbabilityTable([
-        AgeProbabilityRange(0, 12, 1.0 - math.pow(1.0 - 0.25, 1.0 / 12.0)),     # 0.25 en 12 años
-        AgeProbabilityRange(12.000001, 45, 1.0 - math.pow(1.0 - 0.10, 1.0 / 33.0)),  # 0.10 en 33 años
-        AgeProbabilityRange(45.000001, 76, 1.0 - math.pow(1.0 - 0.30, 1.0 / 31.0)),  # 0.30 en 31 años
-        AgeProbabilityRange(76.000001, 200, 1.0 - math.pow(1.0 - 0.70, 1.0 / 49.0)), # 0.70 en 49 años
+        AgeProbabilityRange(0, 12, 1.0 - math.pow(1.0 - 0.25, 1.0 / 12.0)),      # 25% in 12 years
+        AgeProbabilityRange(12.000001, 45, 1.0 - math.pow(1.0 - 0.10, 1.0 / 33.0)),  # 10% in 33 years
+        AgeProbabilityRange(45.000001, 76, 1.0 - math.pow(1.0 - 0.30, 1.0 / 31.0)),  # 30% in 31 years
+        AgeProbabilityRange(76.000001, 200, 1.0 - math.pow(1.0 - 0.70, 1.0 / 49.0)), # 70% in 49 years
     ])
 
-    # Mujer
     death_female = ProbabilityTable([
-        AgeProbabilityRange(0, 12, 1.0 - math.pow(1.0 - 0.25, 1.0 / 12.0)),     # 0.25 en 12 años
-        AgeProbabilityRange(12.000001, 45, 1.0 - math.pow(1.0 - 0.15, 1.0 / 33.0)),  # 0.15 en 33 años
-        AgeProbabilityRange(45.000001, 76, 1.0 - math.pow(1.0 - 0.35, 1.0 / 31.0)),  # 0.35 en 31 años
-        AgeProbabilityRange(76.000001, 200, 1.0 - math.pow(1.0 - 0.65, 1.0 / 49.0)), # 0.65 en 49 años
+        AgeProbabilityRange(0, 12, 1.0 - math.pow(1.0 - 0.25, 1.0 / 12.0)),      # 25% in 12 years
+        AgeProbabilityRange(12.000001, 45, 1.0 - math.pow(1.0 - 0.15, 1.0 / 33.0)),  # 15% in 33 years
+        AgeProbabilityRange(45.000001, 76, 1.0 - math.pow(1.0 - 0.35, 1.0 / 31.0)),  # 35% in 31 years
+        AgeProbabilityRange(76.000001, 200, 1.0 - math.pow(1.0 - 0.65, 1.0 / 49.0)), # 65% in 49 years
     ])
 
     # ============================================================================
-    # PREGNANCY PROBABILITIES (Tabla 2 del problema)
-    # ============================================================================
-    # Probabilidad ANUAL de que una mujer quede embarazada según su edad.
+    # PREGNANCY PROBABILITIES (Table 2)
+    # Annual chance of pregnancy by age.
     # ============================================================================
     pregnancy = ProbabilityTable([
         AgeProbabilityRange(0, 11.9999, 0.0),
@@ -214,9 +202,8 @@ def _make_default_registry() -> ProbabilityTablesRegistry:
     ])
 
     # ============================================================================
-    # PARTNER DESIRE (Tabla 4 del problema)
-    # ============================================================================
-    # Probabilidad ANUAL de querer pareja según la edad.
+    # PARTNER DESIRE (Table 4)
+    # Annual chance of wanting a partner by age.
     # ============================================================================
     partner_desire = ProbabilityTable([
         AgeProbabilityRange(0, 11.9999, 0.0),
@@ -229,10 +216,9 @@ def _make_default_registry() -> ProbabilityTablesRegistry:
     ])
 
     # ============================================================================
-    # COUPLE MATCH (Tabla 5 del problema)
-    # ============================================================================
-    # Probabilidad de formar pareja según la diferencia de edad.
-    # Se interpreta como probabilidad por intento de formación.
+    # COUPLE MATCH (Table 5)
+    # Chance of forming a couple based on age difference.
+    # Treated as the probability of a single attempt.
     # ============================================================================
     couple_match = ProbabilityTable([
         AgeProbabilityRange(0.0, 5.0, 0.45),
@@ -243,31 +229,27 @@ def _make_default_registry() -> ProbabilityTablesRegistry:
     ])
 
     # ============================================================================
-    # BREAKUP (enunciado del problema)
-    # ============================================================================
-    # Probabilidad ANUAL de ruptura = 0.20 (constante).
+    # BREAKUP
+    # Constant annual breakup probability.
     # ============================================================================
     breakup = ProbabilityTable([AgeProbabilityRange(0.0, 200.0, 0.20)])
 
     # ============================================================================
-    # GRIEF TIME (Tabla 6 del problema)
-    # ============================================================================
-    # Tiempo de duelo en soledad: distribución exponencial con media dada.
-    # Los valores de la tabla representan la MEDIA del tiempo de duelo.
+    # GRIEF TIME (Table 6)
+    # Average time alone after a breakup or widowhood.
     # ============================================================================
     grief_time = GriefTimeTable([
-        GriefTimeRange(0.0, 15.0, 3.0),       # 3 meses
-        GriefTimeRange(15.0001, 21.0, 6.0),    # 6 meses
-        GriefTimeRange(21.0001, 35.0, 6.0),    # 6 meses
-        GriefTimeRange(35.0001, 45.0, 12.0),   # 1 año = 12 meses
-        GriefTimeRange(45.0001, 60.0, 24.0),   # 2 años = 24 meses
-        GriefTimeRange(60.0001, 200.0, 48.0),  # 4 años = 48 meses
+        GriefTimeRange(0.0, 15.0, 3.0),       # 3 months
+        GriefTimeRange(15.0001, 21.0, 6.0),    # 6 months
+        GriefTimeRange(21.0001, 35.0, 6.0),    # 6 months
+        GriefTimeRange(35.0001, 45.0, 12.0),   # 1 year
+        GriefTimeRange(45.0001, 60.0, 24.0),   # 2 years
+        GriefTimeRange(60.0001, 200.0, 48.0),  # 4 years
     ])
 
     # ============================================================================
-    # BABIES DISTRIBUTION (Tabla 7 del problema)
-    # ============================================================================
-    # Distribución del número de bebés por embarazo.
+    # BABIES DISTRIBUTION (Table 7)
+    # Babies per pregnancy.
     # ============================================================================
     babies_distribution = DiscreteDistribution([
         DistributionEntry(1, 0.70),
@@ -278,9 +260,8 @@ def _make_default_registry() -> ProbabilityTablesRegistry:
     ])
 
     # ============================================================================
-    # DESIRED CHILDREN (Tabla 3 del problema)
-    # ============================================================================
-    # Distribución del número deseado de hijos por persona.
+    # DESIRED CHILDREN (Table 3)
+    # Desired children per person.
     # ============================================================================
     desired_children_distribution = DiscreteDistribution([
         DistributionEntry(1, 0.60),
@@ -304,11 +285,9 @@ def _make_default_registry() -> ProbabilityTablesRegistry:
     )
 
 
-# single shared registry instance for simple import
+# One shared registry for the whole project.
 tables: ProbabilityTablesRegistry = _make_default_registry()
 
-
-# Exported names
 __all__ = [
     "AgeProbabilityRange",
     "ProbabilityTable",
