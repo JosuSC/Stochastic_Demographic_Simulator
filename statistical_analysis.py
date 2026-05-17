@@ -18,6 +18,7 @@ from typing import Callable, Mapping, Optional, Sequence, TypedDict
 
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -147,30 +148,32 @@ def run_multiple_simulations(
 
     results: list[SimulationRunResult] = []
 
-    for run_index in range(num_runs):
-        run_seed = _derive_run_seed(seed, run_index)
-        try:
-            records = run_single_simulation(seed=run_seed)
-            results.append(
-                SimulationRunResult(
-                    run_id=run_index + 1,
-                    seed=run_seed,
-                    records=records,
+    with tqdm(total=num_runs, desc="Running simulations", unit="sim") as pbar:
+        for run_index in range(num_runs):
+            run_seed = _derive_run_seed(seed, run_index)
+            try:
+                records = run_single_simulation(seed=run_seed)
+                results.append(
+                    SimulationRunResult(
+                        run_id=run_index + 1,
+                        seed=run_seed,
+                        records=records,
+                    )
                 )
-            )
-        except (
-            NotImplementedError, ValueError, RuntimeError, TypeError,
-            KeyError, IndexError, OSError, AssertionError, ArithmeticError,
-        ) as exc:
-            logging.exception("Run %d failed", run_index + 1)
-            results.append(
-                SimulationRunResult(
-                    run_id=run_index + 1,
-                    seed=run_seed,
-                    records=None,
-                    error=str(exc),
+            except (
+                NotImplementedError, ValueError, RuntimeError, TypeError,
+                KeyError, IndexError, OSError, AssertionError, ArithmeticError,
+            ) as exc:
+                logging.exception("Run %d failed", run_index + 1)
+                results.append(
+                    SimulationRunResult(
+                        run_id=run_index + 1,
+                        seed=run_seed,
+                        records=None,
+                        error=str(exc),
+                    )
                 )
-            )
+            pbar.update(1)
 
     successful_runs = sum(1 for result in results if result.succeeded)
     logging.info("Completed %d/%d simulation runs successfully", successful_runs, num_runs)

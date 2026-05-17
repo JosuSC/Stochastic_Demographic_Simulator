@@ -2,3 +2,4 @@ pandas>=2.0
 numpy>=1.24
 streamlit>=1.36
 plotly>=5.20
+tqdm>=4.65

@@ -72,7 +72,7 @@ def main() -> int:
     register_simulation_runner(run_single_simulation_complete)
 
     # 2. Launch the independent runs.
-    num_runs = 30
+    num_runs = 100
     logging.info("Running %d simulation iterations...", num_runs)
     start_time = time.time()
     results = run_multiple_simulations(num_runs=num_runs, seed=42)

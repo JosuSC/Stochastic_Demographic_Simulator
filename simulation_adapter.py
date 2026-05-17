@@ -15,8 +15,8 @@ from engine.simulator import Simulator
 
 SIMULATION_YEARS = 100
 YEARS_PER_STEP = 1.0
-INITIAL_POPULATION_FEMALE = 500
-INITIAL_POPULATION_MALE = 500
+INITIAL_POPULATION_FEMALE = 250
+INITIAL_POPULATION_MALE = 250
 
 
 class SimulationRecord(dict[str, int | float]):
